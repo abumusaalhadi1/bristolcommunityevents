@@ -1,0 +1,56 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Login | Bristol Community Events{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <div class="auth-container">
+            <div class="auth-tabs">
+                <button class="auth-tab active" type="button" data-target="login-form">Login</button>
+                <button class="auth-tab" type="button" data-target="register-form">Register</button>
+            </div>
+
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input id="login-email" type="email" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input id="login-password" type="password" required>
+                </div>
+
+                <button type="submit" class="btn">Login</button>
+            </form>
+
+            <form id="register-form" style="display: none;">
+                <div class="form-group">
+                    <label for="register-name">Full Name</label>
+                    <input id="register-name" type="text" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="register-email">Email</label>
+                    <input id="register-email" type="email" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="register-password">Password</label>
+                    <input id="register-password" type="password" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="register-confirm">Confirm Password</label>
+                    <input id="register-confirm" type="password" required>
+                </div>
+
+                <button type="submit" class="btn">Register</button>
+            </form>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/login.js') }}"></script>
+{% endblock %}

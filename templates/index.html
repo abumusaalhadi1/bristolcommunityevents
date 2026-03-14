@@ -1,0 +1,149 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Bristol Community Events | Discover Bristol's Vibrant Event Scene{% endblock %}
+
+{% block content %}
+    <section class="hero">
+        <div class="container">
+            <h1>Discover Bristol's Vibrant Event Scene</h1>
+            <p>From music festivals to workshops, find and book your perfect Bristol experience</p>
+
+            <div class="hero-search">
+                <input type="text" placeholder="Search events...">
+                <select>
+                    <option>All Categories</option>
+                    <option>Music</option>
+                    <option>Sports</option>
+                    <option>Exhibitions</option>
+                    <option>Workshops</option>
+                </select>
+                <button class="btn" type="button">Search</button>
+            </div>
+
+            <a href="{{ url_for('events') }}" class="btn" style="margin-top: 1rem;">Browse All Events</a>
+        </div>
+    </section>
+
+    <div class="container">
+        <section class="stats-section">
+            <div class="stats-grid">
+                <div class="stat">
+                    <div class="stat-number">150+</div>
+                    <div class="stat-label">Monthly Events</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">12</div>
+                    <div class="stat-label">Venues</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">5,000+</div>
+                    <div class="stat-label">Happy Attendees</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">95%</div>
+                    <div class="stat-label">Satisfaction Rate</div>
+                </div>
+            </div>
+        </section>
+
+        <section style="margin: 3rem 0;">
+            <h2>Event Categories</h2>
+            <div class="categories-grid">
+                <a href="{{ url_for('events', category='music') }}" class="category-card">
+                    <div class="category-icon">&#x1F3B5;</div>
+                    <h3>Music Events</h3>
+                    <p>Concerts &amp; festivals</p>
+                </a>
+                <a href="{{ url_for('events', category='sports') }}" class="category-card">
+                    <div class="category-icon">&#x26BD;</div>
+                    <h3>Sports</h3>
+                    <p>Matches &amp; tournaments</p>
+                </a>
+                <a href="{{ url_for('events', category='exhibitions') }}" class="category-card">
+                    <div class="category-icon">&#x1F3A8;</div>
+                    <h3>Exhibitions</h3>
+                    <p>Art &amp; culture displays</p>
+                </a>
+                <a href="{{ url_for('events', category='workshops') }}" class="category-card">
+                    <div class="category-icon">&#x1F527;</div>
+                    <h3>Workshops</h3>
+                    <p>Learning &amp; skills</p>
+                </a>
+            </div>
+        </section>
+
+        <section style="margin: 3rem 0;">
+            <h2>Featured Events</h2>
+            <div class="events-grid">
+                {% for event in featured_events %}
+                    <div class="event-card">
+                        <div class="event-image" style="background-image: url('{{ event.image_url }}');">
+                            <span style="position: relative; z-index: 1;">{{ event.event_name }}</span>
+                        </div>
+                        <div class="event-content">
+                            <h3>{{ event.event_name }}</h3>
+                            <p>{{ event.event_date_display }}</p>
+                            <p>{{ event.event_location }}</p>
+                            <p class="event-price">{{ event.price_display }}</p>
+                            <a href="{{ url_for('booking') }}" class="btn">Book Now</a>
+                        </div>
+                    </div>
+                {% else %}
+                    <p>No featured events available right now.</p>
+                {% endfor %}
+            </div>
+
+            <div style="text-align: center; margin-top: 2rem;">
+                <a href="{{ url_for('events') }}" class="btn">See More Events</a>
+            </div>
+        </section>
+    </div>
+
+    <section class="reviews-section">
+        <div class="container">
+            <h2 style="text-align: center;">What Our Attendees Say</h2>
+            <div class="reviews-grid">
+                <div class="review-card">
+                    <div class="reviewer">
+                        <div class="reviewer-avatar">SJ</div>
+                        <div>
+                            <h4>Sarah Johnson</h4>
+                            <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                        </div>
+                    </div>
+                    <p>"Found the perfect music festival through this platform! The booking process was smooth and the event exceeded expectations."</p>
+                </div>
+                <div class="review-card">
+                    <div class="reviewer">
+                        <div class="reviewer-avatar">MJ</div>
+                        <div>
+                            <h4>Mike Thompson</h4>
+                            <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                        </div>
+                    </div>
+                    <p>"As a student, the discounts are amazing! I've attended 3 events this month alone. Highly recommended!"</p>
+                </div>
+                <div class="review-card">
+                    <div class="reviewer">
+                        <div class="reviewer-avatar">ER</div>
+                        <div>
+                            <h4>Emma Roberts</h4>
+                            <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9734;</div>
+                        </div>
+                    </div>
+                    <p>"Great variety of events. The venue information is accurate and the capacity limits ensure comfortable experiences."</p>
+                </div>
+                <div class="review-card">
+                    <div class="reviewer">
+                        <div class="reviewer-avatar">DL</div>
+                        <div>
+                            <h4>David Lewis</h4>
+                            <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                        </div>
+                    </div>
+                    <p>"The student discount made events so affordable! Attended 5 different events this semester without breaking the bank. The booking system is super easy to use!"</p>
+                </div>
+            </div>
+        </div>
+    </section>
+{% endblock %}

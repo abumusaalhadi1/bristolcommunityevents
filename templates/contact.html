@@ -1,0 +1,113 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Contact Us | Bristol Community Events{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <h1 style="margin: 2rem 0; text-align: center;">Contact Us</h1>
+
+        {% if success %}
+            <div class="alert alert-success">Thank you for your message! We will get back to you soon.</div>
+        {% endif %}
+
+        {% if errors %}
+            <div class="alert alert-error">
+                <strong>Please fix the following:</strong>
+                <ul>
+                    {% for error in errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        <div class="contact-container">
+            <div class="contact-info">
+                <h2>Get In Touch</h2>
+                <p>Have questions about our events or need assistance with booking? We're here to help!</p>
+
+                <div class="contact-item">
+                    <div class="contact-icon">&#x1F4CD;</div>
+                    <div>
+                        <h3>Our Office</h3>
+                        <p>42 Queen Square<br>Bristol BS1 4QR<br>United Kingdom</p>
+                    </div>
+                </div>
+
+                <div class="contact-item">
+                    <div class="contact-icon">&#x1F4DE;</div>
+                    <div>
+                        <h3>Phone</h3>
+                        <p>+44 (0) 117 123 4567</p>
+                    </div>
+                </div>
+
+                <div class="contact-item">
+                    <div class="contact-icon">&#x1F4E7;</div>
+                    <div>
+                        <h3>Email</h3>
+                        <p>info@bristolevents.com</p>
+                    </div>
+                </div>
+
+                <div class="contact-item">
+                    <div class="contact-icon">&#x1F552;</div>
+                    <div>
+                        <h3>Business Hours</h3>
+                        <p>Monday - Friday: 9:00 AM - 6:00 PM<br>Saturday: 10:00 AM - 4:00 PM</p>
+                    </div>
+                </div>
+                <div class="contact-item">
+                    <div class="contact-icon">&#x1F310;</div>
+                    <div>
+                        <h3>Follow Us</h3>
+                        <div class="social-links">
+                            <a href="#">Facebook</a>
+                            <a href="#">Twitter</a>
+                            <a href="#">Instagram</a>
+                            <a href="#">LinkedIn</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="contact-form">
+                <h2>Send Us a Message</h2>
+                <form method="POST" action="{{ url_for('contact') }}">
+                    <div class="form-group">
+                        <label for="name">Full Name</label>
+                        <input id="name" name="name" type="text" value="{{ form_data.name }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input id="email" name="email" type="email" value="{{ form_data.email }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="subject">Subject</label>
+                        <input id="subject" name="subject" type="text" value="{{ form_data.subject }}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="message">Message</label>
+                        <textarea id="message" name="message" placeholder="How can we help you?" required>{{ form_data.message }}</textarea>
+                    </div>
+
+                    <button type="submit" class="btn">Send Message</button>
+                </form>
+            </div>
+        </div>
+
+        <section>
+            <h2>Our Location</h2>
+            <div class="map-container">
+                <iframe
+                    src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d19868.75916174817!2d-2.600682434765625!3d51.45451499999999!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x48718dd7bc0a85a5%3A0xcf5c4b07c8e5d91c!2sBristol%2C%20UK!5e0!3m2!1sen!2s!4v1700000000000!5m2!1sen!2s"
+                    width="100%" height="400" style="border:0;" allowfullscreen="" loading="lazy"
+                    referrerpolicy="no-referrer-when-downgrade" title="Our Location in Bristol">
+                </iframe>
+            </div>
+        </section>
+    </div>
+{% endblock %}
