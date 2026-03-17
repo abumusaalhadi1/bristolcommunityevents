@@ -15,29 +15,31 @@
             <!-- Filters Section -->
             <div class="filters">
                 <h3>Filter Events</h3>
-                <div class="filter-group">
-                    <label>Category:</label>
-                    <select>
-                        <option value="">All Categories</option>
-                        <option value="music">Music Events</option>
-                        <option value="sports">Sports</option>
-                        <option value="exhibitions">Exhibitions</option>
-                        <option value="workshops">Workshops</option>
-                        <option value="theatre">Theatre</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Date:</label>
-                    <input type="date">
-                </div>
-                <div class="filter-group">
-                    <label>Price:</label>
-                    <select>
-                        <option value="">Any Price</option>
-                        <option value="free">Free Events</option>
-                        <option value="paid">Paid Events</option>
-                    </select>
-                </div>
+                <form method="GET" action="{{ url_for('events') }}">
+                    <div class="filter-group">
+                        <label>Category:</label>
+                        <select name="category" onchange="this.form.submit()">
+                            <option value="">All Categories</option>
+                            {% for cat in categories %}
+                                <option value="{{ cat.category_name }}" {% if request.args.get('category') == cat.category_name %}selected{% endif %}>
+                                    {{ cat.category_name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Date:</label>
+                        <input type="date" name="date" value="{{ request.args.get('date', '') }}" onchange="this.form.submit()">
+                    </div>
+                    <div class="filter-group">
+                        <label>Price:</label>
+                        <select name="price" onchange="this.form.submit()">
+                            <option value="">Any Price</option>
+                            <option value="free" {% if request.args.get('price') == 'free' %}selected{% endif %}>Free Events</option>
+                            <option value="paid" {% if request.args.get('price') == 'paid' %}selected{% endif %}>Paid Events</option>
+                        </select>
+                    </div>
+                </form>
             </div>
 
             <!-- Events Grid -->

@@ -3,22 +3,25 @@ from datetime import datetime
 import mysql.connector
 from flask import Flask, flash, redirect, render_template, request, url_for
 
-app = Flask(__name__)
-app.secret_key = "your-secret-key-here"
+from config import DB_CONFIG, SECRET_KEY
 
-# Database configuration
-# Update these values for your local MySQL instance.
-db_config = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "root",
-    "password": "Amah#@#98UK",
-    "database": "uwe_events_db",
-}
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
 
 
 def get_db_connection():
-    return mysql.connector.connect(**db_config)
+    return mysql.connector.connect(**DB_CONFIG)
+
+
+def parse_ticket_count(value):
+    try:
+        tickets = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if 1 <= tickets <= 10:
+        return tickets
+    return None
 
 
 @app.route("/")
@@ -73,32 +76,39 @@ def home():
 @app.route("/events")
 def events():
     category = request.args.get("category")
+    date_filter = request.args.get("date")
+    price_filter = request.args.get("price")
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
+    filters = ["e.event_date >= CURDATE()"]
+    params = []
+
     if category:
-        cursor.execute(
-            """
-            SELECT e.*, v.venue_name, c.category_name
-            FROM events e
-            JOIN venues v ON e.venue_id = v.venue_id
-            JOIN categories c ON e.category_id = c.category_id
-            WHERE c.category_name = %s AND e.event_date >= CURDATE()
-            ORDER BY e.event_date
-            """,
-            (category,),
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT e.*, v.venue_name, c.category_name
-            FROM events e
-            JOIN venues v ON e.venue_id = v.venue_id
-            JOIN categories c ON e.category_id = c.category_id
-            WHERE e.event_date >= CURDATE()
-            ORDER BY e.event_date
-            """
-        )
+        filters.append("c.category_name = %s")
+        params.append(category)
+
+    if date_filter:
+        filters.append("DATE(e.event_date) = %s")
+        params.append(date_filter)
+
+    if price_filter == "free":
+        filters.append("(e.price IS NULL OR e.price = 0)")
+    elif price_filter == "paid":
+        filters.append("(e.price IS NOT NULL AND e.price > 0)")
+
+    where_clause = " AND ".join(filters)
+    cursor.execute(
+        f"""
+        SELECT e.*, v.venue_name, c.category_name
+        FROM events e
+        JOIN venues v ON e.venue_id = v.venue_id
+        JOIN categories c ON e.category_id = c.category_id
+        WHERE {where_clause}
+        ORDER BY e.event_date
+        """,
+        tuple(params),
+    )
 
     events_rows = cursor.fetchall()
 
@@ -158,11 +168,11 @@ def book(event_id):
         full_name = request.form["full_name"].strip()
         email = request.form["email"].strip()
         phone = request.form.get("phone", "").strip()
-        tickets = int(request.form["tickets"])
+        tickets = parse_ticket_count(request.form.get("tickets"))
         is_student = "is_student" in request.form
 
-        if not full_name or not email or tickets < 1:
-            flash("Please fill in all required fields.", "error")
+        if not full_name or not email or tickets is None:
+            flash("Please fill in all required fields (tickets 1-10).", "error")
             cursor.close()
             conn.close()
             return redirect(url_for("book", event_id=event_id))
@@ -174,14 +184,27 @@ def book(event_id):
         total_amount = (price * tickets) - discount
 
         try:
-            cursor.execute(
-                """
-                INSERT INTO users (full_name, email, phone)
-                VALUES (%s, %s, %s)
-                """,
-                (full_name, email, phone),
-            )
-            user_id = cursor.lastrowid
+            cursor.execute("SELECT user_id FROM users WHERE email = %s", (email,))
+            existing_user = cursor.fetchone()
+            if existing_user:
+                user_id = existing_user["user_id"]
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET full_name=%s, phone=%s
+                    WHERE user_id=%s
+                    """,
+                    (full_name, phone, user_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO users (full_name, email, phone)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (full_name, email, phone),
+                )
+                user_id = cursor.lastrowid
 
             cursor.execute(
                 """
@@ -317,8 +340,14 @@ def edit_booking(booking_id):
     cursor = conn.cursor(dictionary=True)
 
     if request.method == "POST":
-        tickets = int(request.form["tickets"])
+        tickets = parse_ticket_count(request.form.get("tickets"))
         is_student = "is_student" in request.form
+
+        if tickets is None:
+            cursor.close()
+            conn.close()
+            flash("Tickets must be between 1 and 10.", "error")
+            return redirect(url_for("edit_booking", booking_id=booking_id))
 
         cursor.execute(
             """
@@ -334,7 +363,7 @@ def edit_booking(booking_id):
             conn.close()
             return render_template("404.html"), 404
 
-        price = row["price"]
+        price = row["price"] or 0
         discount = 0
         if is_student:
             discount = price * tickets * 0.10

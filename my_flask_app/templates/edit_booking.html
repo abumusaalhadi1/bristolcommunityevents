@@ -8,7 +8,7 @@
 
     <form method="POST">
         <label for="tickets">Tickets</label>
-        <input type="number" id="tickets" name="tickets" min="1" value="{{ booking.tickets }}" required />
+        <input type="number" id="tickets" name="tickets" min="1" max="10" value="{{ booking.tickets }}" required />
 
         <label>
             <input type="checkbox" name="is_student" {% if booking.is_student %}checked{% endif %} /> Student (10% discount)
