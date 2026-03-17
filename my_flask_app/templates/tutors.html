@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tutors</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+    <h1>Tutors</h1>
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Subject</th>
+        </tr>
+        {% for tutor in tutors %}
+        <tr>
+            <td>{{ tutor.id }}</td>
+            <td>{{ tutor.name }}</td>
+            <td>{{ tutor.subject }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>

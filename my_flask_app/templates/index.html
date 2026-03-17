@@ -1,0 +1,199 @@
+{% extends "layout.html" %}
+
+{% block title %}Bristol Community Events | Discover Bristol's Vibrant Event Scene{% endblock %}
+
+{% block content %}
+<main>
+        <!-- Hero Section with Search -->
+        <section class="hero">
+            <div class="container">
+                <h1>Discover Bristol's Vibrant Event Scene</h1>
+                <p>From music festivals to workshops, find and book your perfect Bristol experience</p>
+
+                <div class="hero-search">
+                    <input type="text" placeholder="Search events...">
+                    <select>
+                        <option>All Categories</option>
+                        <option>Music</option>
+                        <option>Sports</option>
+                        <option>Exhibitions</option>
+                        <option>Workshops</option>
+                    </select>
+                    <button class="btn">Search</button>
+                </div>
+
+                <a href="{{ url_for('events') }}" class="btn" style="margin-top: 1rem;">Browse All Events</a>
+            </div>
+        </section>
+
+        <div class="container">
+            <!-- Statistics Section -->
+            <section class="stats-section">
+                <div class="stats-grid">
+                    <div class="stat">
+                    <div class="stat-number">{{ events_count }}+</div>
+                        <div class="stat-label">Monthly Events</div>
+                    </div>
+                    <div class="stat">
+                    <div class="stat-number">{{ venues_count }}</div>
+                        <div class="stat-label">Venues</div>
+                    </div>
+                    <div class="stat">
+                    <div class="stat-number">{{ attendees_count }}</div>
+                        <div class="stat-label">Happy Attendees</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">95%</div>
+                        <div class="stat-label">Satisfaction Rate</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Event Categories -->
+            <section style="margin: 3rem 0;">
+                <h2>Event Categories</h2>
+                <div class="categories-grid">
+                    <a href="{{ url_for('events', category='Music') }}" class="category-card">
+                        <div class="category-icon">&#127925;</div>
+                        <h3>Music Events</h3>
+                        <p>Concerts & festivals</p>
+                    </a>
+                    <a href="{{ url_for('events', category='Sports') }}" class="category-card">
+                        <div class="category-icon">&#9917;</div>
+                        <h3>Sports</h3>
+                        <p>Matches & tournaments</p>
+                    </a>
+                    <a href="{{ url_for('events', category='Exhibitions') }}" class="category-card">
+                        <div class="category-icon">&#127912;</div>
+                        <h3>Exhibitions</h3>
+                        <p>Art & culture displays</p>
+                    </a>
+                    <a href="{{ url_for('events', category='Workshops') }}" class="category-card">
+                        <div class="category-icon">&#128295;</div>
+                        <h3>Workshops</h3>
+                        <p>Learning & skills</p>
+                    </a>
+                </div>
+            </section>
+
+            <!-- Featured Events -->
+            <!-- Featured Events -->
+            <section style="margin: 3rem 0;">
+                <h2>Featured Events</h2>
+                {% set event_images = [
+                    'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80',
+                    'https://images.unsplash.com/photo-1563089145-599997674d42?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80',
+                    'https://images.unsplash.com/photo-1574629810360-7efbbe195018'
+                ] %}
+                {% if featured_events %}
+                <div class="events-grid">
+                    {% for event in featured_events %}
+                    <div class="event-card">
+                        <div class="event-image"
+                            style="background-image: url('{{ event.image_url|default(event_images[loop.index0 % event_images|length]) }}');">
+                            <span style="position: relative; z-index: 1;">{{ event.event_name }}</span>
+                        </div>
+                        <div class="event-content">
+                            <h3>{{ event.event_name }}</h3>
+                            <p>{{ event.event_date.strftime('%B %d, %Y') }}</p>
+                            <p>{{ event.venue_name }}</p>
+                            <p class="event-price">
+                                {% if event.price is none or event.price == 0 %}
+                                    Free
+                                {% else %}
+                                    &pound;{{ "%.2f"|format(event.price) }}
+                                {% endif %}
+                            </p>
+                            <a href="{{ url_for('event_detail', event_id=event.event_id) }}" class="btn">Book Now</a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p>No upcoming events yet. Check back soon.</p>
+                {% endif %}
+
+                <div style="text-align: center; margin-top: 2rem;">
+                    <a href="{{ url_for('events') }}" class="btn">See More Events</a>
+                </div>
+            </section>
+        </div>
+
+        <!-- Reviews Section -->
+        <!-- Reviews Section -->
+        <section class="reviews-section">
+            <div class="container">
+                <h2 style="text-align: center;">What Our Attendees Say</h2>
+                <div class="reviews-grid">
+                    {% if testimonials %}
+                        {% for testimonial in testimonials %}
+                        <div class="review-card">
+                            <div class="reviewer">
+                                <div class="reviewer-avatar">
+                                    {{ testimonial.author_initials or (testimonial.author_name[:2]|upper) }}
+                                </div>
+                                <div>
+                                    <h4>{{ testimonial.author_name }}</h4>
+                                    <div class="rating">
+                                        {% if testimonial.rating %}
+                                            {% for _ in range(testimonial.rating) %}&#9733;{% endfor %}
+                                        {% else %}
+                                            &#9733;&#9733;&#9733;&#9733;&#9733;
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            <p>"{{ testimonial.content }}"</p>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                    <div class="review-card">
+                        <div class="reviewer">
+                            <div class="reviewer-avatar">SJ</div>
+                            <div>
+                                <h4>Sarah Johnson</h4>
+                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            </div>
+                        </div>
+                        <p>"Found the perfect music festival through this platform! The booking process was smooth and
+                            the event exceeded expectations."</p>
+                    </div>
+                    <div class="review-card">
+                        <div class="reviewer">
+                            <div class="reviewer-avatar">MJ</div>
+                            <div>
+                                <h4>Mike Thompson</h4>
+                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            </div>
+                        </div>
+                        <p>"As a student, the discounts are amazing! I've attended 3 events this month alone. Highly
+                            recommended!"</p>
+                    </div>
+                    <div class="review-card">
+                        <div class="reviewer">
+                            <div class="reviewer-avatar">ER</div>
+                            <div>
+                                <h4>Emma Roberts</h4>
+                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            </div>
+                        </div>
+                        <p>"Great variety of events. The venue information is accurate and the capacity limits ensure
+                            comfortable experiences."</p>
+                    </div>
+                    <div class="review-card">
+                        <div class="reviewer">
+                            <div class="reviewer-avatar">DL</div>
+                            <div>
+                                <h4>David Lewis</h4>
+                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            </div>
+                        </div>
+                        <p>"The student discount made events so affordable! Attended 5 different events this semester
+                            without breaking the bank. The booking system is super easy to use!"</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </main>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="server-error">
+    <h1>Something went wrong</h1>
+    <p>We ran into a server error. Please try again later.</p>
+    <a class="btn" href="{{ url_for('home') }}">Back to Home</a>
+</main>
+{% endblock %}

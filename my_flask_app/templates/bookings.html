@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="bookings-list">
+    <h1>Bookings</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Email</th>
+                <th>Event</th>
+                <th>Date</th>
+                <th>Tickets</th>
+                <th>Student</th>
+                <th>Discount</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for booking in bookings %}
+            <tr>
+                <td>{{ booking.booking_id }}</td>
+                <td>{{ booking.full_name }}</td>
+                <td>{{ booking.email }}</td>
+                <td>{{ booking.event_name }}</td>
+                <td>{{ booking.event_date.strftime('%B %d, %Y') }}</td>
+                <td>{{ booking.tickets }}</td>
+                <td>{{ 'Yes' if booking.is_student else 'No' }}</td>
+                <td>&pound;{{ "%.2f"|format(booking.discount_applied) }}</td>
+                <td>
+                    <a href="{{ url_for('edit_booking', booking_id=booking.booking_id) }}">Edit</a>
+                    <form method="POST" action="{{ url_for('delete_booking', booking_id=booking.booking_id) }}" style="display:inline;">
+                        <button type="submit">Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9">No bookings found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</main>
+{% endblock %}

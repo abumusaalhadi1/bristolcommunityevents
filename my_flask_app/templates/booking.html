@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+
+{% block title %}Book Tickets | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main>
+        <div class="container">
+            <h1 style="margin: 2rem 0;">Book Your Tickets</h1>
+
+            <div class="booking-container">
+                <div class="booking-form">
+                    <h2>Booking Details</h2>
+                    <form id="bookingForm" method="POST" action="{{ url_for('book', event_id=event.event_id) }}">
+                        <div class="form-group">
+                            <label for="event">Event *</label>
+                            <input type="text" id="event" value="{{ event.event_name }} - {{ event.event_date.strftime('%B %d, %Y') }}" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="tickets">Number of Tickets *</label>
+                            <input type="number" id="tickets" name="tickets" min="1" max="10" value="1" required>
+                            <div class="error-message">Please enter number of tickets (1-10)</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="full_name">Full Name *</label>
+                            <input type="text" id="full_name" name="full_name" required>
+                            <div class="error-message">Please enter your full name</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="email">Email *</label>
+                            <input type="email" id="email" name="email" required>
+                            <div class="error-message">Please enter a valid email address</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="phone">Phone Number</label>
+                            <input type="tel" id="phone" name="phone">
+                        </div>
+
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="is_student" name="is_student">
+                                <label for="is_student" style="margin: 0;">I am a student (10% discount)</label>
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn" id="proceedToPayment" disabled>Proceed to Payment</button>
+                    </form>
+                </div>
+
+                <div class="booking-summary">
+                    <h2>Order Summary</h2>
+                    <div class="price-breakdown">
+                        <p>{{ event.event_name }} x 1</p>
+                        <p>Base Price: &pound;{{ "%.2f"|format(event.price) if event.price is not none and event.price > 0 else "0.00" }}</p>
+                        <p>Student Discount: 10% (if applicable)</p>
+                        <p><strong>Total: Calculated at checkout</strong></p>
+                    </div>
+                    <p><small>Booking confirmation will be sent to your email</small></p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Payment Modal -->
+    <div class="modal" id="paymentModal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2>Complete Your Payment</h2>
+            <p>Total Amount: <strong>&pound;{{ "%.2f"|format(event.price) if event.price is not none and event.price > 0 else "0.00" }}</strong></p>
+
+            <div class="payment-options">
+                <div class="payment-option">
+                    <input type="radio" name="payment" id="paypal" checked>
+                    <div class="payment-icon">&#128309;</div>
+                    <div class="payment-option-content">
+                        <label for="paypal" style="cursor: pointer;">
+                            <strong>PayPal</strong>
+                            <small>Pay securely with your PayPal account</small>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="payment-option">
+                    <input type="radio" name="payment" id="card">
+                    <div class="payment-icon">&#128179;</div>
+                    <div class="payment-option-content">
+                        <label for="card" style="cursor: pointer;">
+                            <strong>Credit/Debit Card</strong>
+                            <small>Pay with Visa, Mastercard, or American Express</small>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="payment-option">
+                    <input type="radio" name="payment" id="bank">
+                    <div class="payment-icon">&#127970;</div>
+                    <div class="payment-option-content">
+                        <label for="bank" style="cursor: pointer;">
+                            <strong>Bank Transfer</strong>
+                            <small>Transfer directly from your bank account</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn" onclick="processPayment()">Pay Now</button>
+            <p style="text-align: center; margin-top: 1rem; font-size: 0.9rem;">
+                <small>This is a demo payment page. No real transaction will occur.</small>
+            </p>
+        </div>
+    </div>
+{% endblock %}

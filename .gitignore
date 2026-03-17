@@ -1,0 +1,23 @@
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+venv*/
+my_flask_app/venv/
+my_flask_app/venv312/
+
+# Environment files
+.env
+.env.*
+
