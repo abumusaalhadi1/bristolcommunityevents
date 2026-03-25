@@ -4,49 +4,57 @@
 
 {% block content %}
 <main class="container">
-        <div class="auth-container">
-            <div class="auth-tabs">
-                <div class="auth-tab">Login</div>
-                <div class="auth-tab active">Register</div>
-            </div>
-            
-            <form id="login-form" method="POST" action="{{ url_for('login') }}" style="display: none;">
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" name="email" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" name="password" required>
-                </div>
-                
-                <button type="submit" class="btn">Login</button>
-            </form>
-            
-            <form id="register-form" method="POST" action="{{ url_for('register') }}">
-                <div class="form-group">
-                    <label>Full Name</label>
-                    <input type="text" name="full_name" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" name="email" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" name="password" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Confirm Password</label>
-                    <input type="password" name="confirm_password" required>
-                </div>
-                
-                <button type="submit" class="btn">Register</button>
-            </form>
+    <div class="auth-container">
+        <h1>Create Account</h1>
+        <p class="auth-copy">Register once to book events, track status, and download receipts.</p>
+
+        <div class="auth-tabs">
+            <div class="auth-tab">Login</div>
+            <div class="auth-tab active">Register</div>
         </div>
-    </main>
+
+        <form id="login-form" method="POST" action="{{ url_for('login') }}" style="display: none;">
+            <div class="form-group">
+                <label for="email_login">Email</label>
+                <input type="email" id="email_login" name="email" required />
+            </div>
+
+            <div class="form-group">
+                <label for="password_login">Password</label>
+                <input type="password" id="password_login" name="password" required />
+            </div>
+
+            <button type="submit" class="btn">Login</button>
+        </form>
+
+        <form id="register-form" method="POST" action="{{ url_for('register') }}">
+            <div class="form-group">
+                <label for="full_name">Full Name</label>
+                <input type="text" id="full_name" name="full_name" required />
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required />
+            </div>
+
+            <div class="form-group">
+                <label for="phone">Phone</label>
+                <input type="tel" id="phone" name="phone" />
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" minlength="8" required />
+            </div>
+
+            <div class="form-group">
+                <label for="confirm_password">Confirm Password</label>
+                <input type="password" id="confirm_password" name="confirm_password" minlength="8" required />
+            </div>
+
+            <button type="submit" class="btn">Register</button>
+        </form>
+    </div>
+</main>
 {% endblock %}

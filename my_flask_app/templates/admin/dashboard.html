@@ -1,0 +1,78 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Admin Dashboard | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <h1 style="margin: 0;">Dashboard</h1>
+    <div style="display:flex; gap:.5rem; flex-wrap: wrap;">
+        <a class="btn" href="{{ url_for('admin_bookings') }}" style="width: auto;">View Bookings</a>
+        <a class="btn" href="{{ url_for('admin_users') }}" style="width: auto;">View Users</a>
+    </div>
+</div>
+
+<div class="admin-cards">
+    <div class="admin-card">
+        <div class="label">Events</div>
+        <div class="value">{{ events_count }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Users</div>
+        <div class="value">{{ users_count }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Bookings</div>
+        <div class="value">{{ bookings_count }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Tickets Sold</div>
+        <div class="value">{{ tickets_total }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Revenue</div>
+        <div class="value">&pound;{{ "%.2f"|format(revenue_total) }}</div>
+    </div>
+</div>
+
+<h2 style="margin-top: 1.25rem;">Recent bookings</h2>
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Email</th>
+                <th>Event</th>
+                <th>Event Date</th>
+                <th>Booked</th>
+                <th>Tickets</th>
+                <th>Status</th>
+                <th>Payment</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in recent_bookings %}
+            <tr>
+                <td>#{{ b.booking_id }}</td>
+                <td>{{ b.full_name }}</td>
+                <td>{{ b.email }}</td>
+                <td>{{ b.event_name }}</td>
+                <td>{{ b.event_date.strftime('%B %d, %Y') if b.event_date else '-' }}</td>
+                <td>{{ (b.created_at or b.booking_date).strftime('%B %d, %Y %H:%M') if (b.created_at or b.booking_date) else '-' }}</td>
+                <td>{{ b.tickets }}</td>
+                <td><span class="status-badge status-{{ b.status|lower }}">{{ b.status }}</span></td>
+                <td>{{ b.payment_status }}</td>
+                <td class="admin-actions">
+                    <a class="admin-link" href="{{ url_for('admin_edit_booking', booking_id=b.booking_id) }}">Edit</a>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="10">No bookings found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

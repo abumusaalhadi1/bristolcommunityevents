@@ -10,17 +10,18 @@
                 <h1>Discover Bristol's Vibrant Event Scene</h1>
                 <p>From music festivals to workshops, find and book your perfect Bristol experience</p>
 
-                <div class="hero-search">
-                    <input type="text" placeholder="Search events...">
-                    <select>
-                        <option>All Categories</option>
-                        <option>Music</option>
-                        <option>Sports</option>
-                        <option>Exhibitions</option>
-                        <option>Workshops</option>
+                <form class="hero-search" action="{{ url_for('events') }}" method="get">
+                    <input type="text" name="q" placeholder="Search events, venues, or locations..." value="{{ request.args.get('q', '') }}">
+                    <select name="category">
+                        <option value="">All Categories</option>
+                        {% for category in categories %}
+                            <option value="{{ category.category_name }}" {% if request.args.get('category', '') == category.category_name %}selected{% endif %}>
+                                {{ category.category_name }}
+                            </option>
+                        {% endfor %}
                     </select>
-                    <button class="btn">Search</button>
-                </div>
+                    <button type="submit" class="btn">Search</button>
+                </form>
 
                 <a href="{{ url_for('events') }}" class="btn" style="margin-top: 1rem;">Browse All Events</a>
             </div>

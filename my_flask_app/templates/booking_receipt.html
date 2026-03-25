@@ -1,0 +1,47 @@
+{% extends "layout.html" %}
+
+{% block title %}Booking Receipt | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main class="container">
+    <section class="page-section">
+        <div class="page-header">
+            <div>
+                <h1>Booking Receipt</h1>
+                <p>Confirmation for booking #{{ booking.booking_id }}</p>
+            </div>
+            <a class="btn" href="{{ url_for('download_booking_receipt', booking_id=booking.booking_id) }}">Download Receipt</a>
+        </div>
+
+        <div class="receipt-grid">
+            <article class="receipt-card">
+                <h2>Booking Summary</h2>
+                <p><strong>Booking ID:</strong> {{ booking.booking_id }}</p>
+                <p><strong>Status:</strong> <span class="status-badge status-{{ booking.status|lower }}">{{ booking.status }}</span></p>
+                <p><strong>Payment Status:</strong> {{ booking.payment_status }}</p>
+                <p><strong>Booked At:</strong> {{ (booking.created_at or booking.payment_date).strftime('%B %d, %Y %H:%M') if (booking.created_at or booking.payment_date) else '-' }}</p>
+                <p><strong>Tickets:</strong> {{ booking.tickets }}</p>
+                <p><strong>Total Paid:</strong> &pound;{{ "%.2f"|format(booking.amount or 0) }}</p>
+                <p><strong>Payment Method:</strong> {{ (booking.payment_method or 'card')|title }}</p>
+            </article>
+
+            <article class="receipt-card">
+                <h2>User Details</h2>
+                <p><strong>Name:</strong> {{ booking.full_name }}</p>
+                <p><strong>Email:</strong> {{ booking.email }}</p>
+                <p><strong>Phone:</strong> {{ booking.phone or '-' }}</p>
+                <p><strong>Role:</strong> {{ booking.role|title }}</p>
+            </article>
+
+            <article class="receipt-card receipt-card-wide">
+                <h2>Event Details</h2>
+                <p><strong>Event:</strong> {{ booking.event_name }}</p>
+                <p><strong>Date:</strong> {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}</p>
+                <p><strong>Venue:</strong> {{ booking.venue_name or '-' }}</p>
+                <p><strong>Location:</strong> {{ booking.location or booking.address or '-' }}</p>
+                <p><strong>Category:</strong> {{ booking.category_name or '-' }}</p>
+            </article>
+        </div>
+    </section>
+</main>
+{% endblock %}

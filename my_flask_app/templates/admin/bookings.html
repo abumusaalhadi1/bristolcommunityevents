@@ -1,0 +1,108 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Admin Bookings | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <h1 style="margin: 0;">Bookings</h1>
+    <div style="opacity: .8;">Total: {{ bookings|length }}</div>
+</div>
+
+<form method="GET" action="{{ url_for('admin_bookings') }}" class="admin-filters">
+    <div class="form-group" style="min-width: 240px; flex: 1;">
+        <label>Search</label>
+        <input type="text" name="q" value="{{ q }}" placeholder="Name, email, or event..." />
+    </div>
+
+    <div class="form-group">
+        <label>Event</label>
+        <select name="event_id">
+            <option value="">All</option>
+            {% for e in events %}
+                <option value="{{ e.event_id }}" {% if event_id and event_id|string == e.event_id|string %}selected{% endif %}>
+                    {{ e.event_name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>Status</label>
+        <select name="status">
+            <option value="">All</option>
+            {% for item in statuses %}
+                <option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>From</label>
+        <input type="date" name="date_from" value="{{ date_from }}" />
+    </div>
+
+    <div class="form-group">
+        <label>To</label>
+        <input type="date" name="date_to" value="{{ date_to }}" />
+    </div>
+
+    <div style="display:flex; gap:.5rem; align-items:flex-end;">
+        <button type="submit" class="btn" style="width: auto;">Filter</button>
+        <a class="btn" href="{{ url_for('admin_bookings') }}" style="width: auto; background: #2c3e50;">Clear</a>
+    </div>
+</form>
+
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Booked</th>
+                <th>User</th>
+                <th>Email</th>
+                <th>Event</th>
+                <th>Event Date</th>
+                <th>Tickets</th>
+                <th>Status</th>
+                <th>Payment</th>
+                <th>Amount</th>
+                <th>Student</th>
+                <th>Discount</th>
+                <th style="width: 140px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in bookings %}
+            <tr>
+                <td>#{{ b.booking_id }}</td>
+                <td>{{ (b.created_at or b.booking_date).strftime('%B %d, %Y %H:%M') if (b.created_at or b.booking_date) else '-' }}</td>
+                <td>{{ b.full_name }}</td>
+                <td>
+                    <a class="admin-link" href="{{ url_for('admin_bookings', q=b.email) }}">{{ b.email }}</a>
+                </td>
+                <td>{{ b.event_name }}</td>
+                <td>{{ b.event_date.strftime('%B %d, %Y') if b.event_date else '-' }}</td>
+                <td>{{ b.tickets }}</td>
+                <td><span class="status-badge status-{{ b.status|lower }}">{{ b.status }}</span></td>
+                <td>{{ b.payment_status }}</td>
+                <td>&pound;{{ "%.2f"|format(b.amount or 0) }}</td>
+                <td>{{ 'Yes' if b.is_student else 'No' }}</td>
+                <td>&pound;{{ "%.2f"|format(b.discount_applied or 0) }}</td>
+                <td>
+                    <div class="admin-actions">
+                        <a class="admin-link" href="{{ url_for('admin_edit_booking', booking_id=b.booking_id) }}">Edit</a>
+                        <form method="POST" action="{{ url_for('admin_delete_booking', booking_id=b.booking_id) }}" onsubmit="return confirm('Delete this booking?');">
+                            <button type="submit" class="admin-danger">Delete</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="13">No bookings match your filters.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

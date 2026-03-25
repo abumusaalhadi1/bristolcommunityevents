@@ -1,0 +1,95 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Manage Events | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <h1 style="margin: 0;">Manage Events</h1>
+    <a class="btn" href="{{ url_for('add_event') }}" style="width: auto;">Add Event</a>
+</div>
+
+<form method="GET" action="{{ url_for('admin_events') }}" class="admin-filters">
+    <div class="form-group" style="min-width: 240px; flex: 1;">
+        <label>Search</label>
+        <input type="text" name="q" value="{{ q }}" placeholder="Event, venue, category, location..." />
+    </div>
+
+    <div class="form-group">
+        <label>Category</label>
+        <select name="category_id">
+            <option value="">All</option>
+            {% for cat in categories %}
+                <option value="{{ cat.category_id }}" {% if category_id and category_id|string == cat.category_id|string %}selected{% endif %}>
+                    {{ cat.category_name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>From</label>
+        <input type="date" name="date_from" value="{{ date_from }}" />
+    </div>
+
+    <div class="form-group">
+        <label>To</label>
+        <input type="date" name="date_to" value="{{ date_to }}" />
+    </div>
+
+    <div style="display:flex; gap:.5rem; align-items:flex-end;">
+        <button type="submit" class="btn" style="width: auto;">Filter</button>
+        <a class="btn" href="{{ url_for('admin_events') }}" style="width: auto; background: #2c3e50;">Clear</a>
+    </div>
+</form>
+
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Date</th>
+                <th>Venue</th>
+                <th>Category</th>
+                <th>Capacity</th>
+                <th>Remaining</th>
+                <th>Price</th>
+                <th style="width: 140px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in events %}
+            <tr>
+                <td>{{ e.event_id }}</td>
+                <td>
+                    <div style="font-weight: 800;">{{ e.event_name }}</div>
+                    <div style="opacity: .8; font-size: .95rem;">{{ e.location or '-' }}</div>
+                </td>
+                <td>{{ e.event_date.strftime('%B %d, %Y') if e.event_date else '-' }}</td>
+                <td>{{ e.venue_name or '-' }}</td>
+                <td>{{ e.category_name or '-' }}</td>
+                <td>{{ e.event_capacity if e.event_capacity is not none else '-' }}</td>
+                <td>{{ e.remaining_seats if e.remaining_seats is not none else '-' }}</td>
+                <td>
+                    {% if e.price is none or e.price == 0 %}
+                        Free
+                    {% else %}
+                        &pound;{{ "%.2f"|format(e.price) }}
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="admin-actions">
+                        <a class="admin-link" href="{{ url_for('update_event', event_id=e.event_id) }}">Edit</a>
+                        <a class="admin-link" href="{{ url_for('delete_event', event_id=e.event_id) }}">Delete</a>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9">No events found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

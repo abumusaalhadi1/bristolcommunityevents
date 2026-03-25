@@ -1,0 +1,26 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Delete Event | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Delete Event</h1>
+        <p style="margin-top: .35rem; opacity: .8;">
+            {{ event.event_name }} on {{ event.event_date.strftime('%B %d, %Y') if event.event_date else '-' }}
+        </p>
+    </div>
+    <a class="btn" href="{{ url_for('admin_events') }}" style="width: auto; background: #2c3e50;">Back</a>
+</div>
+
+<div class="receipt-card" style="margin-top: 1rem;">
+    <p>Are you sure you want to delete this event?</p>
+    <p><strong>Venue:</strong> {{ event.venue_name or '-' }}</p>
+    <p><strong>Category:</strong> {{ event.category_name or '-' }}</p>
+
+    <form method="POST" style="margin-top: 1rem; display:flex; gap:.75rem; flex-wrap: wrap;">
+        <button type="submit" class="btn" style="width: auto; background: #b42318;">Delete Event</button>
+        <a class="btn" href="{{ url_for('admin_events') }}" style="width: auto; background: #2c3e50;">Cancel</a>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="not-found">
+    <h1>Unauthorized</h1>
+    <p>Please log in to continue.</p>
+    <a class="btn" href="{{ url_for('login') }}">Login</a>
+</main>
+{% endblock %}

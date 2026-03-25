@@ -3,113 +3,191 @@
 {% block title %}Book Tickets | Bristol Community Events{% endblock %}
 
 {% block content %}
+{% set event_is_sold_out = event and event.remaining_seats is not none and event.remaining_seats <= 0 %}
 <main>
-        <div class="container">
-            <h1 style="margin: 2rem 0;">Book Your Tickets</h1>
+    <div class="container">
+        <h1 style="margin: 2rem 0;">Book Your Tickets</h1>
 
-            <div class="booking-container">
-                <div class="booking-form">
-                    <h2>Booking Details</h2>
-                    <form id="bookingForm" method="POST" action="{{ url_for('book', event_id=event.event_id) }}">
+        <div class="booking-container">
+            <div class="booking-form">
+                <h2>Booking Details</h2>
+
+                {% if event %}
+                    {% if event_is_sold_out %}
+                        <div class="flash error">This event is sold out.</div>
+                    {% else %}
+                        <div class="booking-current-event">
+                            <strong>{{ event.event_name }}</strong>
+                            <p>
+                                {{ event.event_date_label }}
+                                {% if event.venue_name %} | {{ event.venue_name }}{% endif %}
+                                {% if event.category_name %} | {{ event.category_name }}{% endif %}
+                            </p>
+                            <p>Remaining seats: {{ event.remaining_label }}</p>
+                        </div>
+                    {% endif %}
+                {% endif %}
+
+                {% if not event and not booking_events %}
+                    <div class="flash error">No upcoming events are available to book right now.</div>
+                {% endif %}
+
+                {% if not event or not event_is_sold_out %}
+                    <form
+                        id="bookingForm"
+                        method="POST"
+                        action="{{ url_for('book_tickets') if not event else url_for('book', event_id=event.event_id) }}"
+                        data-price="{{ '%.2f'|format(event.price) if event and event.price is not none and event.price > 0 else '0.00' }}"
+                        data-event-name="{{ event.event_name if event else '' }}"
+                        data-event-date="{{ event.event_date_label if event else '' }}"
+                        data-venue-name="{{ event.venue_name if event else '' }}"
+                        data-remaining-seats="{{ event.remaining_seats if event and event.remaining_seats is not none else '' }}"
+                        data-max-tickets="{{ event.max_tickets if event else 0 }}"
+                        data-booking-date="{{ booking_now.strftime('%B %d, %Y %H:%M') }}"
+                    >
+                        <input type="hidden" name="payment_method" id="paymentMethod" value="paypal" />
+
+                        {% if not event %}
+                            <div class="form-group">
+                                <label for="event_id">Event</label>
+                                <select id="event_id" name="event_id" required>
+                                    <option value="">Select an event</option>
+                                    {% for event_item in booking_events %}
+                                        <option
+                                            value="{{ event_item.event_id }}"
+                                            data-price="{{ '%.2f'|format(event_item.price) if event_item.price is not none and event_item.price > 0 else '0.00' }}"
+                                            data-event-name="{{ event_item.event_name }}"
+                                            data-event-date="{{ event_item.event_date_label }}"
+                                            data-venue-name="{{ event_item.venue_name }}"
+                                            data-remaining-seats="{{ event_item.remaining_seats if event_item.remaining_seats is not none else '' }}"
+                                            data-max-tickets="{{ event_item.max_tickets }}"
+                                        >
+                                            {{ event_item.event_name }} - {{ event_item.event_date_label }}{% if event_item.remaining_seats is none %} (Unlimited seats){% else %} ({{ event_item.remaining_seats }} left){% endif %}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                                <small>Choose the event you want to attend. Only upcoming bookable events are shown.</small>
+                            </div>
+                        {% endif %}
+
                         <div class="form-group">
-                            <label for="event">Event *</label>
-                            <input type="text" id="event" value="{{ event.event_name }} - {{ event.event_date.strftime('%B %d, %Y') }}" readonly>
+                            <label for="tickets">Number of Tickets</label>
+                            {% if event %}
+                                <select id="tickets" name="tickets" required>
+                                    {% for n in range(1, event.max_tickets + 1) %}
+                                        <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }}</option>
+                                    {% endfor %}
+                                </select>
+                                <small>Maximum tickets available: {{ event.max_tickets }}.</small>
+                            {% else %}
+                                <select id="tickets" name="tickets" required disabled>
+                                    <option value="">Select an event</option>
+                                </select>
+                                <small id="ticketsHelp">Ticket options will appear after you choose an event.</small>
+                            {% endif %}
                         </div>
 
                         <div class="form-group">
-                            <label for="tickets">Number of Tickets *</label>
-                            <input type="number" id="tickets" name="tickets" min="1" max="10" value="1" required>
-                            <div class="error-message">Please enter number of tickets (1-10)</div>
+                            <label for="full_name">Full Name</label>
+                            <input type="text" id="full_name" value="{{ current_user.full_name }}" readonly required />
                         </div>
 
                         <div class="form-group">
-                            <label for="full_name">Full Name *</label>
-                            <input type="text" id="full_name" name="full_name" required>
-                            <div class="error-message">Please enter your full name</div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="email">Email *</label>
-                            <input type="email" id="email" name="email" required>
-                            <div class="error-message">Please enter a valid email address</div>
+                            <label for="email">Email</label>
+                            <input type="email" id="email" value="{{ current_user.email }}" readonly required />
                         </div>
 
                         <div class="form-group">
                             <label for="phone">Phone Number</label>
-                            <input type="tel" id="phone" name="phone">
+                            <input type="tel" id="phone" name="phone" value="{{ current_user.phone or '' }}" />
                         </div>
 
                         <div class="form-group">
-                            <div class="checkbox-group">
-                                <input type="checkbox" id="is_student" name="is_student">
-                                <label for="is_student" style="margin: 0;">I am a student (10% discount)</label>
-                            </div>
+                            <label class="student-discount-toggle">
+                                <span>Student discount (10%)</span>
+                                <input type="checkbox" id="is_student" name="is_student" />
+                            </label>
                         </div>
 
                         <button type="button" class="btn" id="proceedToPayment" disabled>Proceed to Payment</button>
                     </form>
-                </div>
-
-                <div class="booking-summary">
-                    <h2>Order Summary</h2>
-                    <div class="price-breakdown">
-                        <p>{{ event.event_name }} x 1</p>
-                        <p>Base Price: &pound;{{ "%.2f"|format(event.price) if event.price is not none and event.price > 0 else "0.00" }}</p>
-                        <p>Student Discount: 10% (if applicable)</p>
-                        <p><strong>Total: Calculated at checkout</strong></p>
-                    </div>
-                    <p><small>Booking confirmation will be sent to your email</small></p>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <!-- Payment Modal -->
-    <div class="modal" id="paymentModal">
-        <div class="modal-content">
-            <span class="close-modal">&times;</span>
-            <h2>Complete Your Payment</h2>
-            <p>Total Amount: <strong>&pound;{{ "%.2f"|format(event.price) if event.price is not none and event.price > 0 else "0.00" }}</strong></p>
-
-            <div class="payment-options">
-                <div class="payment-option">
-                    <input type="radio" name="payment" id="paypal" checked>
-                    <div class="payment-icon">&#128309;</div>
-                    <div class="payment-option-content">
-                        <label for="paypal" style="cursor: pointer;">
-                            <strong>PayPal</strong>
-                            <small>Pay securely with your PayPal account</small>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="payment-option">
-                    <input type="radio" name="payment" id="card">
-                    <div class="payment-icon">&#128179;</div>
-                    <div class="payment-option-content">
-                        <label for="card" style="cursor: pointer;">
-                            <strong>Credit/Debit Card</strong>
-                            <small>Pay with Visa, Mastercard, or American Express</small>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="payment-option">
-                    <input type="radio" name="payment" id="bank">
-                    <div class="payment-icon">&#127970;</div>
-                    <div class="payment-option-content">
-                        <label for="bank" style="cursor: pointer;">
-                            <strong>Bank Transfer</strong>
-                            <small>Transfer directly from your bank account</small>
-                        </label>
-                    </div>
-                </div>
+                {% endif %}
             </div>
 
-            <button class="btn" onclick="processPayment()">Pay Now</button>
-            <p style="text-align: center; margin-top: 1rem; font-size: 0.9rem;">
-                <small>This is a demo payment page. No real transaction will occur.</small>
-            </p>
+            <div class="booking-summary">
+                <h2>Order Summary</h2>
+                <div class="price-breakdown">
+                    <p><strong>Event:</strong> <span id="summaryEventName">{{ event.event_name if event else 'No event selected' }}</span></p>
+                    <p id="summaryEventMeta">
+                        {% if event %}
+                            {{ event.event_date_label }}{% if event.venue_name %} | {{ event.venue_name }}{% endif %}
+                        {% else %}
+                            Select an event to see the date, venue, and price.
+                        {% endif %}
+                    </p>
+                    <p id="summaryRemainingSeatsRow" {% if not event %}hidden{% endif %}>
+                        Remaining seats: <span id="summaryRemainingSeats">{{ event.remaining_label if event else '' }}</span>
+                    </p>
+                    <p>Tickets: <span id="summaryTickets">{{ 0 if event_is_sold_out else (1 if event else 0) }}</span></p>
+                    <p>Price per ticket: &pound;<span id="summaryPrice">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></p>
+                    <p>Subtotal: &pound;<span id="summarySubtotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></p>
+                    <p>Student discount (10%): -&pound;<span id="summaryDiscount">0.00</span></p>
+                    <p><strong>Total: &pound;<span id="summaryTotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></strong></p>
+                </div>
+                <p><small>Receipts are available immediately after payment.</small></p>
+            </div>
         </div>
     </div>
+</main>
+
+<div class="modal" id="paymentModal">
+    <div class="modal-content">
+        <span class="close-modal">&times;</span>
+        <h2>Complete Your Payment</h2>
+        <p>Event: <strong><span id="modalEventName">{{ event.event_name if event else 'No event selected' }}</span></strong></p>
+        <p>Total Amount: <strong>&pound;<span id="modalTotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></strong></p>
+        <p class="modal-meta" id="modalEventMeta">
+            {% if event %}
+                Event date: {{ event.event_date_label }}
+                {% if booking_now %}| Booking date: {{ booking_now.strftime('%B %d, %Y %H:%M') }}{% endif %}
+            {% else %}
+                Select an event to continue.
+            {% endif %}
+        </p>
+
+        <div class="payment-options">
+            <label class="payment-option">
+                <input type="radio" name="payment" value="paypal" checked />
+                <div class="payment-icon">&#128309;</div>
+                <div class="payment-option-content">
+                    <strong>PayPal</strong>
+                    <small>Simulated online payment</small>
+                </div>
+            </label>
+
+            <label class="payment-option">
+                <input type="radio" name="payment" value="card" />
+                <div class="payment-icon">&#128179;</div>
+                <div class="payment-option-content">
+                    <strong>Credit or Debit Card</strong>
+                    <small>Processed as a demo card payment</small>
+                </div>
+            </label>
+
+            <label class="payment-option">
+                <input type="radio" name="payment" value="bank" />
+                <div class="payment-icon">&#127970;</div>
+                <div class="payment-option-content">
+                    <strong>Bank Transfer</strong>
+                    <small>Recorded as a simulated transfer</small>
+                </div>
+            </label>
+        </div>
+
+        <button class="btn" type="button" onclick="processPayment()">Pay Now</button>
+        <p class="payment-note">
+            <small>This is a simulated payment flow. No real transaction will occur.</small>
+        </p>
+    </div>
+</div>
 {% endblock %}

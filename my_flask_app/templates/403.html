@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="not-found">
+    <h1>Access Forbidden</h1>
+    <p>You do not have permission to access this page.</p>
+    <a class="btn" href="{{ url_for('home') }}">Back to Home</a>
+</main>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "layout.html" %}
+
+{% block title %}My Bookings | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main class="container">
+    <section class="page-section">
+        <div class="page-header">
+            <div>
+                <h1>My Bookings</h1>
+                <p>Track your event bookings, payment status, and receipts.</p>
+            </div>
+            <a class="btn" href="{{ url_for('events') }}">Browse Events</a>
+        </div>
+
+        <div class="admin-table-wrap">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Event</th>
+                        <th>Event Date</th>
+                        <th>Booked At</th>
+                        <th>Tickets</th>
+                        <th>Status</th>
+                        <th>Payment</th>
+                        <th>Amount</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for booking in bookings %}
+                    <tr>
+                        <td>#{{ booking.booking_id }}</td>
+                        <td>{{ booking.event_name }}</td>
+                        <td>{{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}</td>
+                        <td>{{ (booking.created_at or booking.payment_date).strftime('%B %d, %Y %H:%M') if (booking.created_at or booking.payment_date) else '-' }}</td>
+                        <td>{{ booking.tickets }}</td>
+                        <td><span class="status-badge status-{{ booking.status|lower }}">{{ booking.status }}</span></td>
+                        <td>{{ booking.payment_status }}</td>
+                        <td>&pound;{{ "%.2f"|format(booking.amount or 0) }}</td>
+                        <td>
+                            <div class="admin-actions">
+                                <a class="admin-link" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}">Receipt</a>
+                                {% if booking.status != 'Cancelled' %}
+                                <form method="POST" action="{{ url_for('cancel_booking', booking_id=booking.booking_id) }}" onsubmit="return confirm('Cancel this booking?');">
+                                    <button type="submit" class="admin-danger">Cancel</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9">You do not have any bookings yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+{% endblock %}

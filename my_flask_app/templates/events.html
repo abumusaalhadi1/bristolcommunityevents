@@ -6,41 +6,55 @@
 <main>
         <div class="container">
             <div class="events-header">
-                <h1>All Events</h1>
                 <div>
-                    <input type="text" placeholder="Search events..." style="padding: 0.8rem; border-radius: 5px; border: 1px solid #ddd; width: 100%; max-width: 300px;">
+                    <h1>All Events</h1>
+                    <p>Search, filter, and browse upcoming Bristol events.</p>
                 </div>
             </div>
 
-            <!-- Filters Section -->
-            <div class="filters">
-                <h3>Filter Events</h3>
-                <form method="GET" action="{{ url_for('events') }}">
-                    <div class="filter-group">
-                        <label>Category:</label>
-                        <select name="category" onchange="this.form.submit()">
-                            <option value="">All Categories</option>
-                            {% for cat in categories %}
-                                <option value="{{ cat.category_name }}" {% if request.args.get('category') == cat.category_name %}selected{% endif %}>
-                                    {{ cat.category_name }}
-                                </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>Date:</label>
-                        <input type="date" name="date" value="{{ request.args.get('date', '') }}" onchange="this.form.submit()">
-                    </div>
-                    <div class="filter-group">
-                        <label>Price:</label>
-                        <select name="price" onchange="this.form.submit()">
-                            <option value="">Any Price</option>
-                            <option value="free" {% if request.args.get('price') == 'free' %}selected{% endif %}>Free Events</option>
-                            <option value="paid" {% if request.args.get('price') == 'paid' %}selected{% endif %}>Paid Events</option>
-                        </select>
-                    </div>
-                </form>
-            </div>
+            <form class="filters" method="get" action="{{ url_for('events') }}">
+                <div class="filter-group">
+                    <label for="q">Search</label>
+                    <input
+                        type="text"
+                        id="q"
+                        name="q"
+                        value="{{ q }}"
+                        placeholder="Search events, venues, or locations..."
+                    >
+                </div>
+
+                <div class="filter-group">
+                    <label for="category">Category</label>
+                    <select id="category" name="category">
+                        <option value="">All Categories</option>
+                        {% for category_item in categories %}
+                            <option value="{{ category_item.category_name }}" {% if category == category_item.category_name %}selected{% endif %}>
+                                {{ category_item.category_name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="date">Date</label>
+                    <input type="date" id="date" name="date" value="{{ date }}">
+                </div>
+
+                <div class="filter-group">
+                    <label for="price">Price</label>
+                    <select id="price" name="price">
+                        <option value="" {% if not price %}selected{% endif %}>Any Price</option>
+                        <option value="free" {% if price == 'free' %}selected{% endif %}>Free Events</option>
+                        <option value="paid" {% if price == 'paid' %}selected{% endif %}>Paid Events</option>
+                    </select>
+                </div>
+
+                <div class="filter-actions">
+                    <button type="submit" class="btn">Apply Filters</button>
+                    <a href="{{ url_for('events') }}" class="btn" style="background: #2c3e50;">Clear</a>
+                </div>
+            </form>
 
             <!-- Events Grid -->
             <div class="events-grid">
@@ -89,7 +103,7 @@
                     </div>
                     {% endfor %}
                 {% else %}
-                    <p>No upcoming events found.</p>
+                    <p>No events match your search or filters. Try clearing the filters or broadening the search.</p>
                 {% endif %}
             </div>
 

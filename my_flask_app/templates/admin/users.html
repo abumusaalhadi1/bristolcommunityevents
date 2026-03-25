@@ -1,0 +1,60 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Admin Users | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <h1 style="margin: 0;">Users</h1>
+    <div style="opacity: .8;">Total: {{ users|length }}</div>
+</div>
+
+<form method="GET" action="{{ url_for('admin_users') }}" class="admin-filters">
+    <div class="form-group" style="min-width: 260px; flex: 1;">
+        <label>Search</label>
+        <input type="text" name="q" value="{{ q }}" placeholder="Name or email..." />
+    </div>
+    <div style="display:flex; gap:.5rem; align-items:flex-end;">
+        <button type="submit" class="btn" style="width: auto;">Search</button>
+        <a class="btn" href="{{ url_for('admin_users') }}" style="width: auto; background: #2c3e50;">Clear</a>
+    </div>
+</form>
+
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Role</th>
+                <th>Joined</th>
+                <th>Bookings</th>
+                <th>Tickets</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in users %}
+            <tr>
+                <td>{{ u.user_id }}</td>
+                <td>{{ u.full_name or '-' }}</td>
+                <td>{{ u.email }}</td>
+                <td>{{ u.phone or '-' }}</td>
+                <td><span class="status-badge status-{{ u.role|lower }}">{{ u.role|title }}</span></td>
+                <td>{{ u.created_at.strftime('%B %d, %Y') if u.created_at else '-' }}</td>
+                <td>{{ u.bookings_count }}</td>
+                <td>{{ u.tickets_total }}</td>
+                <td class="admin-actions">
+                    <a class="admin-link" href="{{ url_for('admin_bookings', q=u.email) }}">View bookings</a>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9">No users found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
