@@ -8,6 +8,7 @@
     <div style="display:flex; gap:.5rem; flex-wrap: wrap;">
         <a class="btn" href="{{ url_for('admin_bookings') }}" style="width: auto;">View Bookings</a>
         <a class="btn" href="{{ url_for('admin_users') }}" style="width: auto;">View Users</a>
+        <a class="btn" href="{{ url_for('admin_contact_messages') }}" style="width: auto;">View Messages</a>
     </div>
 </div>
 
@@ -25,6 +26,11 @@
         <div class="value">{{ bookings_count }}</div>
     </div>
     <div class="admin-card">
+        <div class="label">Messages</div>
+        <div class="value">{{ messages_count }}</div>
+        <div style="margin-top: .3rem; color: #5d6b7b; font-weight: 600;">{{ new_messages_count }} new</div>
+    </div>
+    <div class="admin-card">
         <div class="label">Tickets Sold</div>
         <div class="value">{{ tickets_total }}</div>
     </div>
@@ -32,6 +38,48 @@
         <div class="label">Revenue</div>
         <div class="value">&pound;{{ "%.2f"|format(revenue_total) }}</div>
     </div>
+</div>
+
+<h2 style="margin-top: 1.25rem;">Recent contact messages</h2>
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>User</th>
+                <th>Email</th>
+                <th>Subject</th>
+                <th>Submitted</th>
+                <th>Status</th>
+                <th>Message</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in recent_messages %}
+            <tr>
+                <td>#{{ m.message_id }}</td>
+                <td>{{ m.sender_name }}</td>
+                <td>{{ m.sender_email }}</td>
+                <td>{{ m.subject }}</td>
+                <td>{{ m.created_at.strftime('%B %d, %Y %H:%M') if m.created_at else '-' }}</td>
+                <td><span class="status-badge status-{{ m.status|lower }}">{{ m.status }}</span></td>
+                <td>{{ m.message|truncate(120, True, '...') }}</td>
+                <td class="admin-actions">
+                    <a class="admin-link" href="{{ url_for('admin_reply_contact_message', message_id=m.message_id, next=url_for('admin_dashboard')) }}">Reply</a>
+                    <form method="POST" action="{{ url_for('admin_delete_contact_message', message_id=m.message_id) }}" onsubmit="return confirm('Delete this contact message?');">
+                        <input type="hidden" name="next" value="{{ url_for('admin_dashboard') }}" />
+                        <button type="submit" class="admin-danger">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8">No contact messages found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 
 <h2 style="margin-top: 1.25rem;">Recent bookings</h2>
@@ -44,7 +92,7 @@
                 <th>Email</th>
                 <th>Event</th>
                 <th>Event Date</th>
-                <th>Booked</th>
+                <th>Booked At</th>
                 <th>Tickets</th>
                 <th>Status</th>
                 <th>Payment</th>
@@ -59,7 +107,7 @@
                 <td>{{ b.email }}</td>
                 <td>{{ b.event_name }}</td>
                 <td>{{ b.event_date.strftime('%B %d, %Y') if b.event_date else '-' }}</td>
-                <td>{{ (b.created_at or b.booking_date).strftime('%B %d, %Y %H:%M') if (b.created_at or b.booking_date) else '-' }}</td>
+                <td>{{ b.booked_at.strftime('%B %d, %Y %H:%M') if b.booked_at else '-' }}</td>
                 <td>{{ b.tickets }}</td>
                 <td><span class="status-badge status-{{ b.status|lower }}">{{ b.status }}</span></td>
                 <td>{{ b.payment_status }}</td>

@@ -34,6 +34,7 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 ROLE_ADMIN = "admin"
 ROLE_USER = "user"
 BOOKING_STATUSES = ("Pending", "Confirmed", "Cancelled")
+CONTACT_MESSAGE_STATUSES = ("New", "Replied")
 PAYMENT_METHODS = {"paypal", "card", "bank"}
 ACTIVE_BOOKING_CONDITION = "COALESCE(status, 'Confirmed') <> 'Cancelled'"
 
@@ -49,6 +50,15 @@ def parse_ticket_count(value):
     if 1 <= tickets <= 10:
         return tickets
     return None
+
+
+def parse_positive_int(value, default=1):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    return number if number > 0 else default
 
 
 def parse_event_date(value):
@@ -134,6 +144,18 @@ def current_request_path() -> str:
     return full_path[:-1] if full_path.endswith("?") else full_path
 
 
+def current_datetime():
+    return datetime.now()
+
+
+def current_date():
+    return current_datetime().date()
+
+
+def booking_booked_at_sql(alias="b"):
+    return f"COALESCE({alias}.created_at, TIMESTAMP({alias}.booking_date, '00:00:00'))"
+
+
 def fetch_venues_and_categories(cursor):
     cursor.execute("SELECT venue_id, venue_name FROM venues ORDER BY venue_name")
     venues = cursor.fetchall()
@@ -159,9 +181,153 @@ def column_exists(cursor, table_name: str, column_name: str) -> bool:
     return cursor.fetchone() is not None
 
 
+def table_exists(cursor, table_name: str) -> bool:
+    cursor.execute("SHOW TABLES LIKE %s", (table_name,))
+    return cursor.fetchone() is not None
+
+
 def add_column_if_missing(cursor, table_name: str, column_name: str, definition: str):
     if not column_exists(cursor, table_name, column_name):
         cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+
+def rename_column_if_needed(cursor, table_name: str, old_name: str, new_name: str, definition: str):
+    if column_exists(cursor, table_name, old_name) and not column_exists(cursor, table_name, new_name):
+        cursor.execute(
+            f"ALTER TABLE {table_name} CHANGE COLUMN `{old_name}` `{new_name}` {definition}"
+        )
+
+
+def create_contact_messages_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contact_messages (
+            message_id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            sender_name VARCHAR(255) NOT NULL,
+            sender_email VARCHAR(255) NOT NULL,
+            sender_phone VARCHAR(50),
+            subject VARCHAR(255) NOT NULL,
+            message TEXT NOT NULL,
+            admin_reply TEXT,
+            replied_by INT NULL,
+            replied_at DATETIME NULL,
+            user_deleted_at DATETIME NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'New',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+            FOREIGN KEY (replied_by) REFERENCES users(user_id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def ensure_contact_messages_table(cursor):
+    if not table_exists(cursor, "contact_messages"):
+        create_contact_messages_table(cursor)
+        return
+
+    rename_column_if_needed(cursor, "contact_messages", "id", "message_id", "INT NOT NULL AUTO_INCREMENT")
+    rename_column_if_needed(cursor, "contact_messages", "name", "sender_name", "VARCHAR(255) NOT NULL")
+    rename_column_if_needed(cursor, "contact_messages", "email", "sender_email", "VARCHAR(255) NOT NULL")
+
+    add_column_if_missing(cursor, "contact_messages", "user_id", "INT NULL")
+    add_column_if_missing(cursor, "contact_messages", "sender_phone", "VARCHAR(50) NULL")
+    add_column_if_missing(cursor, "contact_messages", "admin_reply", "TEXT NULL")
+    add_column_if_missing(cursor, "contact_messages", "replied_by", "INT NULL")
+    add_column_if_missing(cursor, "contact_messages", "replied_at", "DATETIME NULL")
+    add_column_if_missing(cursor, "contact_messages", "user_deleted_at", "DATETIME NULL")
+    add_column_if_missing(
+        cursor,
+        "contact_messages",
+        "status",
+        "VARCHAR(20) NOT NULL DEFAULT 'New'",
+    )
+    add_column_if_missing(
+        cursor,
+        "contact_messages",
+        "created_at",
+        "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    )
+
+
+def fetch_contact_messages(
+    cursor,
+    user_id=None,
+    message_id=None,
+    q="",
+    status="",
+    limit=None,
+    include_user_deleted=True,
+):
+    filters = []
+    params = []
+
+    if user_id is not None:
+        filters.append("m.user_id = %s")
+        params.append(user_id)
+
+    if message_id is not None:
+        filters.append("m.message_id = %s")
+        params.append(message_id)
+
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            "(m.sender_name LIKE %s OR m.sender_email LIKE %s OR m.subject LIKE %s OR m.message LIKE %s)"
+        )
+        params.extend([like, like, like, like])
+
+    if status:
+        filters.append("m.status = %s")
+        params.append(status)
+
+    if not include_user_deleted:
+        filters.append("m.user_deleted_at IS NULL")
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+    limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
+
+    cursor.execute(
+        f"""
+        SELECT m.message_id, m.user_id, m.sender_name, m.sender_email, m.sender_phone,
+               m.subject, m.message, m.admin_reply, m.status, m.created_at, m.replied_at,
+               m.replied_by, admin.full_name AS replied_by_name
+        FROM contact_messages m
+        LEFT JOIN users admin ON m.replied_by = admin.user_id
+        WHERE {where_clause}
+        ORDER BY m.created_at DESC, m.message_id DESC
+        {limit_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchall()
+
+
+def fetch_contact_message(cursor, message_id: int):
+    messages = fetch_contact_messages(cursor, message_id=message_id, limit=1)
+    return messages[0] if messages else None
+
+
+def count_contact_messages(cursor, status=None):
+    filters = []
+    params = []
+
+    if status:
+        filters.append("status = %s")
+        params.append(status)
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM contact_messages
+        WHERE {where_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchone()["count"] or 0
 
 
 def initialize_database():
@@ -203,10 +369,19 @@ def initialize_database():
             "payment_method",
             "VARCHAR(50) NULL AFTER amount",
         )
+        ensure_contact_messages_table(cursor)
 
         cursor.execute("UPDATE users SET role=%s WHERE role IS NULL OR role=''", (ROLE_USER,))
         cursor.execute(
             "UPDATE bookings SET status='Confirmed' WHERE status IS NULL OR status=''"
+        )
+        cursor.execute("UPDATE contact_messages SET status='New' WHERE status IS NULL OR status=''")
+        cursor.execute(
+            """
+            UPDATE contact_messages
+            SET status='Replied'
+            WHERE (status IS NULL OR status='') AND admin_reply IS NOT NULL AND admin_reply <> ''
+            """
         )
 
         bootstrap_default_admin(cursor)
@@ -249,8 +424,8 @@ def bootstrap_default_admin(cursor):
 
     cursor.execute(
         """
-        INSERT INTO users (full_name, email, phone, password_hash, role)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO users (full_name, email, phone, password_hash, role, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
         """,
         (
             DEFAULT_ADMIN_NAME,
@@ -258,6 +433,7 @@ def bootstrap_default_admin(cursor):
             "",
             generate_password_hash(DEFAULT_ADMIN_PASSWORD),
             ROLE_ADMIN,
+            current_datetime(),
         ),
     )
 
@@ -343,6 +519,29 @@ def booking_totals_join(alias="bt"):
     """
 
 
+def build_pagination_pages(current_page: int, total_pages: int, window: int = 2):
+    if total_pages <= 7:
+        return list(range(1, total_pages + 1))
+
+    pages = []
+    start = max(1, current_page - window)
+    end = min(total_pages, current_page + window)
+
+    if start > 1:
+        pages.append(1)
+        if start > 2:
+            pages.append(None)
+
+    pages.extend(range(start, end + 1))
+
+    if end < total_pages:
+        if end < total_pages - 1:
+            pages.append(None)
+        pages.append(total_pages)
+
+    return pages
+
+
 def fetch_event(cursor, event_id: int):
     cursor.execute(
         f"""
@@ -394,9 +593,11 @@ def available_seats(cursor, event_id: int, exclude_booking_id=None):
 
 
 def fetch_booking_details(cursor, booking_id: int):
+    booked_at_sql = booking_booked_at_sql()
     cursor.execute(
-        """
+        f"""
         SELECT b.booking_id, b.user_id, b.event_id, b.booking_date, b.created_at,
+               {booked_at_sql} AS booked_at,
                b.tickets, b.is_student, b.discount_applied,
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email, u.phone, u.role,
@@ -446,13 +647,10 @@ def view_events():
     return redirect(url_for("events"))
 
 
-def fetch_event_listing(category="", q="", date_filter="", price_filter=""):
+def build_event_listing_filters(category="", q="", date_filter="", price_filter=""):
     price_filter = (price_filter or "").strip().lower()
     if price_filter not in {"", "free", "paid"}:
         price_filter = ""
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
 
     filters = []
     params = []
@@ -477,7 +675,26 @@ def fetch_event_listing(category="", q="", date_filter="", price_filter=""):
     elif price_filter == "paid":
         filters.append("(e.price IS NOT NULL AND e.price > 0)")
 
+    return filters, params, price_filter
+
+
+def fetch_event_listing(category="", q="", date_filter="", price_filter="", limit=None, offset=None):
+    filters, params, price_filter = build_event_listing_filters(
+        category=category,
+        q=q,
+        date_filter=date_filter,
+        price_filter=price_filter,
+    )
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
     where_clause = " AND ".join(filters) if filters else "1=1"
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = f" LIMIT {int(limit)}"
+        if offset is not None:
+            limit_clause += f" OFFSET {int(offset)}"
+
     cursor.execute(
         f"""
         SELECT e.*, v.venue_name, c.category_name,
@@ -495,6 +712,7 @@ def fetch_event_listing(category="", q="", date_filter="", price_filter=""):
             CASE WHEN e.event_date >= CURDATE() THEN 0 ELSE 1 END,
             CASE WHEN e.event_date >= CURDATE() THEN e.event_date END ASC,
             CASE WHEN e.event_date < CURDATE() THEN e.event_date END DESC
+        {limit_clause}
         """,
         tuple(params),
     )
@@ -508,6 +726,37 @@ def fetch_event_listing(category="", q="", date_filter="", price_filter=""):
     conn.close()
 
     return events_rows, categories, price_filter
+
+
+def count_event_listing(category="", q="", date_filter="", price_filter=""):
+    filters, params, _ = build_event_listing_filters(
+        category=category,
+        q=q,
+        date_filter=date_filter,
+        price_filter=price_filter,
+    )
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM events e
+        LEFT JOIN venues v ON e.venue_id = v.venue_id
+        LEFT JOIN categories c ON e.category_id = c.category_id
+        {booking_totals_join()}
+        WHERE {where_clause}
+        """,
+        tuple(params),
+    )
+    total_events = cursor.fetchone()["count"] or 0
+
+    cursor.close()
+    conn.close()
+    return total_events
 
 
 def booking_ticket_limit(event) -> int:
@@ -544,7 +793,7 @@ def enrich_booking_event(event):
 
 def fetch_bookable_events():
     events_rows, _, _ = fetch_event_listing()
-    today = datetime.now().date()
+    today = current_date()
     bookable_events = []
 
     for event in events_rows:
@@ -567,7 +816,7 @@ def fetch_bookable_events():
 
 
 def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
-    booked_at = datetime.now()
+    booked_at = current_datetime()
     today = booked_at.date()
     tickets = parse_ticket_count(request.form.get("tickets"))
     phone = request.form.get("phone", "").strip()
@@ -627,9 +876,9 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
             """
             INSERT INTO bookings (
                 user_id, event_id, booking_date, tickets, is_student,
-                discount_applied, status
+                discount_applied, status, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 g.current_user["user_id"],
@@ -639,6 +888,7 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
                 is_student,
                 discount,
                 "Confirmed",
+                booked_at,
             ),
         )
         booking_id = cursor.lastrowid
@@ -783,7 +1033,7 @@ def add_event():
             "event_capacity": event_capacity,
         }
 
-        today = datetime.now().date()
+        today = current_date()
         if (
             not event_name
             or event_date is None
@@ -892,7 +1142,7 @@ def update_event(event_id):
             venue_id = None
             category_id = None
 
-        today = datetime.now().date()
+        today = current_date()
         if (
             not event_name
             or event_date is None
@@ -1102,12 +1352,53 @@ def events():
     q = request.args.get("q", "").strip()
     date_filter = request.args.get("date", "").strip()
     price_filter = request.args.get("price", "").strip().lower()
-    events_rows, categories, price_filter = fetch_event_listing(
+    page = parse_positive_int(request.args.get("page"), 1)
+    per_page = 6
+
+    total_events = count_event_listing(
         category=category,
         q=q,
         date_filter=date_filter,
         price_filter=price_filter,
     )
+    total_pages = max(1, (total_events + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    offset = (page - 1) * per_page
+
+    events_rows, categories, price_filter = fetch_event_listing(
+        category=category,
+        q=q,
+        date_filter=date_filter,
+        price_filter=price_filter,
+        limit=per_page,
+        offset=offset,
+    )
+
+    pagination_base_args = {}
+    if category:
+        pagination_base_args["category"] = category
+    if q:
+        pagination_base_args["q"] = q
+    if date_filter:
+        pagination_base_args["date"] = date_filter
+    if price_filter:
+        pagination_base_args["price"] = price_filter
+
+    pagination_links = []
+    for item in build_pagination_pages(page, total_pages):
+        if item is None:
+            pagination_links.append({"type": "ellipsis"})
+        else:
+            page_args = dict(pagination_base_args)
+            page_args["page"] = item
+            pagination_links.append(
+                {
+                    "type": "page",
+                    "page": item,
+                    "url": url_for("events", **page_args),
+                }
+            )
+
     return render_template(
         "events.html",
         events=events_rows,
@@ -1116,6 +1407,14 @@ def events():
         category=category,
         date=date_filter,
         price=price_filter,
+        page=page,
+        total_pages=total_pages,
+        total_events=total_events,
+        start_item=((page - 1) * per_page + 1) if total_events else 0,
+        end_item=min(page * per_page, total_events) if total_events else 0,
+        pagination_links=pagination_links,
+        pagination_prev_url=url_for("events", page=page - 1, **pagination_base_args) if page > 1 else None,
+        pagination_next_url=url_for("events", page=page + 1, **pagination_base_args) if page < total_pages else None,
     )
 
 
@@ -1155,8 +1454,8 @@ def book_tickets():
         "booking.html",
         event=None,
         booking_events=fetch_bookable_events(),
-        today=datetime.now().date(),
-        booking_now=datetime.now(),
+        today=current_date(),
+        booking_now=current_datetime(),
     )
 
 
@@ -1204,8 +1503,8 @@ def book(event_id):
         "booking.html",
         event=enrich_booking_event(event),
         booking_events=[],
-        today=datetime.now().date(),
-        booking_now=datetime.now(),
+        today=current_date(),
+        booking_now=current_datetime(),
     )
 
 
@@ -1220,9 +1519,11 @@ def bookings_list():
 def my_bookings():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
+    booked_at_sql = booking_booked_at_sql()
     cursor.execute(
-        """
-        SELECT b.booking_id, b.booking_date, b.created_at, b.tickets, b.is_student,
+        f"""
+        SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at,
+               b.tickets, b.is_student,
                b.discount_applied, COALESCE(b.status, 'Confirmed') AS status,
                e.event_id, e.event_name, e.event_date, e.location,
                p.amount, p.payment_method, COALESCE(p.payment_status, 'Pending') AS payment_status,
@@ -1231,7 +1532,7 @@ def my_bookings():
         JOIN events e ON b.event_id = e.event_id
         LEFT JOIN payments p ON b.booking_id = p.booking_id
         WHERE b.user_id = %s
-        ORDER BY b.created_at DESC, b.booking_id DESC
+        ORDER BY booked_at DESC, b.booking_id DESC
         """,
         (g.current_user["user_id"],),
     )
@@ -1239,6 +1540,137 @@ def my_bookings():
     cursor.close()
     conn.close()
     return render_template("my_bookings.html", bookings=bookings)
+
+
+@app.route("/account", methods=["GET", "POST"])
+@login_required
+def account():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        """
+        SELECT user_id, full_name, email, phone, role, created_at, password_hash
+        FROM users
+        WHERE user_id = %s
+        """,
+        (g.current_user["user_id"],),
+    )
+    account_user = cursor.fetchone()
+
+    if not account_user:
+        cursor.close()
+        conn.close()
+        session.clear()
+        flash("Your account could not be found. Please log in again.", "error")
+        return redirect(url_for("login"))
+
+    password_hash = account_user.pop("password_hash") or ""
+
+    if request.method == "POST":
+        action = request.form.get("action", "").strip()
+
+        try:
+            if action == "profile":
+                full_name = request.form.get("full_name", "").strip()
+                phone = request.form.get("phone", "").strip()
+
+                if not full_name:
+                    flash("Name cannot be empty.", "error")
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE users
+                        SET full_name=%s, phone=%s
+                        WHERE user_id=%s
+                        """,
+                        (full_name, phone, account_user["user_id"]),
+                    )
+                    conn.commit()
+                    flash("Profile updated successfully.", "success")
+                    cursor.close()
+                    conn.close()
+                    return redirect(url_for("account"))
+            elif action == "password":
+                current_password = request.form.get("current_password", "").strip()
+                new_password = request.form.get("new_password", "").strip()
+                confirm_password = request.form.get("confirm_password", "").strip()
+
+                if not current_password or not new_password or not confirm_password:
+                    flash("Please fill in all password fields.", "error")
+                elif not check_password_hash(password_hash, current_password):
+                    flash("Current password is incorrect.", "error")
+                elif len(new_password) < 8:
+                    flash("New password must be at least 8 characters long.", "error")
+                elif new_password != confirm_password:
+                    flash("Passwords do not match.", "error")
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE users
+                        SET password_hash=%s
+                        WHERE user_id=%s
+                        """,
+                        (generate_password_hash(new_password), account_user["user_id"]),
+                    )
+                    conn.commit()
+                    flash("Password changed successfully.", "success")
+                    cursor.close()
+                    conn.close()
+                    return redirect(url_for("account"))
+            else:
+                flash("Invalid account action.", "error")
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f"Database error: {err}", "error")
+
+    contact_messages = fetch_contact_messages(
+        cursor,
+        user_id=account_user["user_id"],
+        include_user_deleted=False,
+    )
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "account.html",
+        account_user=account_user,
+        contact_messages=contact_messages,
+    )
+
+
+@app.route("/account/contact-messages/<int:message_id>/delete", methods=["POST"])
+@login_required
+def account_delete_contact_message(message_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            UPDATE contact_messages
+            SET user_deleted_at=%s
+            WHERE message_id=%s AND user_id=%s AND user_deleted_at IS NULL
+            """,
+            (current_datetime(), message_id, g.current_user["user_id"]),
+        )
+
+        if cursor.rowcount == 0:
+            flash("Message not found or already removed from your profile.", "error")
+        else:
+            conn.commit()
+            flash(
+                "Message removed from your profile. Admins can still see it until they delete it.",
+                "success",
+            )
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for("account"))
 
 
 @app.route("/bookings/<int:booking_id>/receipt")
@@ -1272,7 +1704,7 @@ def download_booking_receipt(booking_id):
     if not can_access_booking(booking):
         abort(403)
 
-    booked_at = booking.get("created_at") or booking.get("payment_date")
+    booked_at = booking.get("booked_at") or booking.get("created_at") or booking.get("payment_date")
     lines = [
         "Bristol Community Events Booking Receipt",
         "",
@@ -1329,6 +1761,7 @@ def cancel_booking(booking_id):
         return redirect(url_for("my_bookings"))
 
     try:
+        now = current_datetime()
         cursor.execute(
             "UPDATE bookings SET status=%s WHERE booking_id=%s",
             ("Cancelled", booking_id),
@@ -1339,7 +1772,7 @@ def cancel_booking(booking_id):
             SET payment_status=%s, payment_date=%s
             WHERE booking_id=%s
             """,
-            ("Cancelled", datetime.now(), booking_id),
+            ("Cancelled", now, booking_id),
         )
         conn.commit()
         flash("Booking cancelled successfully.", "success")
@@ -1369,6 +1802,7 @@ def admin_logout():
 def admin_dashboard():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
+    booked_at_sql = booking_booked_at_sql()
 
     cursor.execute("SELECT COUNT(*) AS count FROM events")
     events_count = cursor.fetchone()["count"]
@@ -1393,9 +1827,12 @@ def admin_dashboard():
     )
     revenue_total = cursor.fetchone()["total"] or 0
 
+    messages_count = count_contact_messages(cursor)
+    new_messages_count = count_contact_messages(cursor, status="New")
+
     cursor.execute(
-        """
-        SELECT b.booking_id, b.booking_date, b.created_at, b.tickets,
+        f"""
+        SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at, b.tickets,
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email,
                e.event_name, e.event_date,
@@ -1404,11 +1841,13 @@ def admin_dashboard():
         JOIN users u ON b.user_id = u.user_id
         JOIN events e ON b.event_id = e.event_id
         LEFT JOIN payments p ON b.booking_id = p.booking_id
-        ORDER BY b.created_at DESC, b.booking_id DESC
+        ORDER BY booked_at DESC, b.booking_id DESC
         LIMIT 5
         """
     )
     recent_bookings = cursor.fetchall()
+
+    recent_messages = fetch_contact_messages(cursor, limit=5)
 
     cursor.close()
     conn.close()
@@ -1421,6 +1860,9 @@ def admin_dashboard():
         tickets_total=tickets_total,
         revenue_total=revenue_total,
         recent_bookings=recent_bookings,
+        messages_count=messages_count,
+        new_messages_count=new_messages_count,
+        recent_messages=recent_messages,
     )
 
 
@@ -1435,6 +1877,7 @@ def admin_bookings():
 
     date_from = parse_event_date(date_from_raw)
     date_to = parse_event_date(date_to_raw)
+    booked_at_sql = booking_booked_at_sql()
 
     filters = []
     params = []
@@ -1463,13 +1906,13 @@ def admin_bookings():
     if date_from is None and date_from_raw:
         flash("Invalid start date filter.", "error")
     elif date_from is not None:
-        filters.append("b.booking_date >= %s")
+        filters.append(f"DATE({booked_at_sql}) >= %s")
         params.append(date_from)
 
     if date_to is None and date_to_raw:
         flash("Invalid end date filter.", "error")
     elif date_to is not None:
-        filters.append("b.booking_date <= %s")
+        filters.append(f"DATE({booked_at_sql}) <= %s")
         params.append(date_to)
 
     where_clause = " AND ".join(filters) if filters else "1=1"
@@ -1479,7 +1922,8 @@ def admin_bookings():
 
     cursor.execute(
         f"""
-        SELECT b.booking_id, b.booking_date, b.created_at, b.tickets, b.is_student, b.discount_applied,
+        SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at,
+               b.tickets, b.is_student, b.discount_applied,
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email,
                e.event_id, e.event_name, e.event_date,
@@ -1489,7 +1933,7 @@ def admin_bookings():
         JOIN events e ON b.event_id = e.event_id
         LEFT JOIN payments p ON b.booking_id = p.booking_id
         WHERE {where_clause}
-        ORDER BY b.created_at DESC, b.booking_id DESC
+        ORDER BY booked_at DESC, b.booking_id DESC
         """,
         tuple(params),
     )
@@ -1557,6 +2001,7 @@ def admin_edit_booking(booking_id):
         payment_status = payment_status_for_booking(status)
 
         try:
+            now = current_datetime()
             cursor.execute(
                 """
                 UPDATE bookings
@@ -1573,7 +2018,7 @@ def admin_edit_booking(booking_id):
                     SET amount=%s, payment_status=%s, payment_date=%s
                     WHERE booking_id=%s
                     """,
-                    (total_amount, payment_status, datetime.now(), booking_id),
+                    (total_amount, payment_status, now, booking_id),
                 )
             else:
                 cursor.execute(
@@ -1586,7 +2031,7 @@ def admin_edit_booking(booking_id):
                         total_amount,
                         "card",
                         payment_status,
-                        datetime.now(),
+                        now,
                     ),
                 )
 
@@ -1682,9 +2127,208 @@ def admin_users():
     return render_template("admin/users.html", users=users_rows, q=q)
 
 
-@app.route("/contact")
+@app.route("/admin/contact-messages")
+@admin_required
+def admin_contact_messages():
+    q = request.args.get("q", "").strip()
+    status_raw = request.args.get("status", "").strip()
+    status_filter = ""
+
+    if status_raw:
+        if status_raw in CONTACT_MESSAGE_STATUSES:
+            status_filter = status_raw
+        else:
+            flash("Invalid contact message status filter.", "error")
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    messages = fetch_contact_messages(cursor, q=q, status=status_filter)
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/messages.html",
+        contact_messages=messages,
+        q=q,
+        status=status_filter,
+        statuses=CONTACT_MESSAGE_STATUSES,
+    )
+
+
+@app.route("/admin/contact-messages/<int:message_id>/reply", methods=["GET", "POST"])
+@admin_required
+def admin_reply_contact_message(message_id):
+    next_url = get_safe_next_url() or url_for("admin_contact_messages")
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    contact_message = fetch_contact_message(cursor, message_id)
+
+    if not contact_message:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if request.method == "POST":
+        admin_reply = request.form.get("admin_reply", "").strip()
+        next_url = get_safe_next_url() or url_for("admin_contact_messages")
+
+        if not admin_reply:
+            flash("Reply cannot be empty.", "error")
+            cursor.close()
+            conn.close()
+            return render_template(
+                "admin/reply_contact_message.html",
+                contact_message=contact_message,
+                admin_reply_text=admin_reply,
+                next_url=next_url,
+            )
+
+        try:
+            now = current_datetime()
+            cursor.execute(
+                """
+                UPDATE contact_messages
+                SET admin_reply=%s, replied_by=%s, replied_at=%s, status=%s
+                WHERE message_id=%s
+                """,
+                (
+                    admin_reply,
+                    g.current_user["user_id"],
+                    now,
+                    "Replied",
+                    message_id,
+                ),
+            )
+            conn.commit()
+            flash("Reply saved. The user can view it on their profile.", "success")
+            cursor.close()
+            conn.close()
+            return redirect(next_url)
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f"Database error: {err}", "error")
+            cursor.close()
+            conn.close()
+            return render_template(
+                "admin/reply_contact_message.html",
+                contact_message=contact_message,
+                admin_reply_text=admin_reply,
+                next_url=next_url,
+            )
+
+    admin_reply_text = contact_message.get("admin_reply") or ""
+    cursor.close()
+    conn.close()
+    return render_template(
+        "admin/reply_contact_message.html",
+        contact_message=contact_message,
+        admin_reply_text=admin_reply_text,
+        next_url=next_url,
+    )
+
+
+@app.route("/admin/contact-messages/<int:message_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_contact_message(message_id):
+    next_url = get_safe_next_url() or url_for("admin_contact_messages")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM contact_messages WHERE message_id = %s", (message_id,))
+        conn.commit()
+        flash("Contact message deleted.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+    return redirect(next_url)
+
+
+@app.route("/contact", methods=["GET", "POST"])
+@login_required
 def contact():
-    return render_template("contact.html")
+    if request.method == "POST":
+        subject = request.form.get("subject", "").strip()
+        message = request.form.get("message", "").strip()
+        sender_name = (g.current_user.get("full_name") or "").strip()
+        sender_email = (g.current_user.get("email") or "").strip()
+        sender_phone = (g.current_user.get("phone") or "").strip()
+
+        if not subject or not message:
+            flash("Please complete the subject and message fields.", "error")
+            return render_template(
+                "contact.html",
+                form_subject=subject,
+                form_message=message,
+            )
+
+        if len(subject) > 255:
+            flash("Subject must be 255 characters or fewer.", "error")
+            return render_template(
+                "contact.html",
+                form_subject=subject[:255],
+                form_message=message,
+            )
+
+        if len(message) > 5000:
+            flash("Message must be 5000 characters or fewer.", "error")
+            return render_template(
+                "contact.html",
+                form_subject=subject,
+                form_message=message[:5000],
+            )
+
+        if not sender_name or not sender_email:
+            flash("Your profile details are incomplete. Please update your account first.", "error")
+            return render_template(
+                "contact.html",
+                form_subject=subject,
+                form_message=message,
+            )
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                INSERT INTO contact_messages (
+                    user_id, sender_name, sender_email, sender_phone, subject, message, status, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    g.current_user["user_id"],
+                    sender_name,
+                    sender_email,
+                    sender_phone,
+                    subject,
+                    message,
+                    "New",
+                    current_datetime(),
+                ),
+            )
+            conn.commit()
+            flash("Your message has been sent. You can view the reply on your profile.", "success")
+            return redirect(url_for("contact"))
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f"Database error: {err}", "error")
+            return render_template(
+                "contact.html",
+                form_subject=subject,
+                form_message=message,
+            )
+        finally:
+            cursor.close()
+            conn.close()
+
+    return render_template("contact.html", form_subject="", form_message="")
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1782,6 +2426,7 @@ def register():
         existing = cursor.fetchone()
 
         try:
+            now = current_datetime()
             password_hash = generate_password_hash(password)
             if existing:
                 if existing.get("password_hash"):
@@ -1791,7 +2436,7 @@ def register():
                 cursor.execute(
                     """
                     UPDATE users
-                    SET full_name=%s, phone=%s, password_hash=%s, role=%s
+                    SET full_name=%s, phone=%s, password_hash=%s, role=%s, created_at=%s
                     WHERE user_id=%s
                     """,
                     (
@@ -1799,16 +2444,17 @@ def register():
                         phone,
                         password_hash,
                         existing.get("role") or ROLE_USER,
+                        now,
                         existing["user_id"],
                     ),
                 )
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (full_name, email, phone, password_hash, role)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO users (full_name, email, phone, password_hash, role, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (full_name, email, phone, password_hash, ROLE_USER),
+                    (full_name, email, phone, password_hash, ROLE_USER, now),
                 )
 
             conn.commit()

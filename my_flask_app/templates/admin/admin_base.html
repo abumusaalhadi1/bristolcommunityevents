@@ -4,17 +4,18 @@
 
 {% block content %}
 <main class="admin-panel">
-    <div class="container admin-shell">
+    <div class="admin-shell">
         <aside class="admin-sidebar">
             <div class="admin-brand">
                 <h2 style="margin: 0;">Admin Panel</h2>
                 <p style="margin: .25rem 0 0; opacity: .8; font-size: .95rem;">Bristol Community Events</p>
             </div>
 
-            <nav class="admin-nav" style="margin-top: 1rem;">
+            <nav class="admin-nav">
                 <a href="{{ url_for('admin_dashboard') }}" class="{% if request.endpoint == 'admin_dashboard' %}active{% endif %}">Dashboard</a>
                 <a href="{{ url_for('admin_bookings') }}" class="{% if request.endpoint in ['admin_bookings','admin_edit_booking'] %}active{% endif %}">Bookings</a>
                 <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">Users</a>
+                <a href="{{ url_for('admin_contact_messages') }}" class="{% if request.endpoint in ['admin_contact_messages','admin_reply_contact_message'] %}active{% endif %}">Messages</a>
                 <a href="{{ url_for('admin_events') }}" class="{% if request.endpoint in ['admin_events','add_event','update_event','delete_event'] %}active{% endif %}">Events</a>
                 <a href="{{ url_for('admin_logout') }}">Logout</a>
             </nav>

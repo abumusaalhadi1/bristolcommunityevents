@@ -34,7 +34,7 @@
                         <td>#{{ booking.booking_id }}</td>
                         <td>{{ booking.event_name }}</td>
                         <td>{{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}</td>
-                        <td>{{ (booking.created_at or booking.payment_date).strftime('%B %d, %Y %H:%M') if (booking.created_at or booking.payment_date) else '-' }}</td>
+                        <td>{{ booking.booked_at.strftime('%B %d, %Y %H:%M') if booking.booked_at else '-' }}</td>
                         <td>{{ booking.tickets }}</td>
                         <td><span class="status-badge status-{{ booking.status|lower }}">{{ booking.status }}</span></td>
                         <td>{{ booking.payment_status }}</td>

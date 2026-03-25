@@ -19,7 +19,7 @@
                 <p><strong>Booking ID:</strong> {{ booking.booking_id }}</p>
                 <p><strong>Status:</strong> <span class="status-badge status-{{ booking.status|lower }}">{{ booking.status }}</span></p>
                 <p><strong>Payment Status:</strong> {{ booking.payment_status }}</p>
-                <p><strong>Booked At:</strong> {{ (booking.created_at or booking.payment_date).strftime('%B %d, %Y %H:%M') if (booking.created_at or booking.payment_date) else '-' }}</p>
+                <p><strong>Booked At:</strong> {{ booking.booked_at.strftime('%B %d, %Y %H:%M') if booking.booked_at else '-' }}</p>
                 <p><strong>Tickets:</strong> {{ booking.tickets }}</p>
                 <p><strong>Total Paid:</strong> &pound;{{ "%.2f"|format(booking.amount or 0) }}</p>
                 <p><strong>Payment Method:</strong> {{ (booking.payment_method or 'card')|title }}</p>

@@ -59,25 +59,28 @@
 
                 <div class="contact-form">
                     <h2>Send Us a Message</h2>
-                    <form>
+                    <p style="margin-bottom: 1rem; color: #52606d;">
+                        Messages are linked to your signed-in account and replies will appear on your profile.
+                    </p>
+                    <form method="POST" action="{{ url_for('contact') }}">
                         <div class="form-group">
-                            <label>Full Name</label>
-                            <input type="text" required>
+                            <label for="full_name">Full Name</label>
+                            <input type="text" id="full_name" value="{{ current_user.full_name }}" readonly>
                         </div>
 
                         <div class="form-group">
-                            <label>Email</label>
-                            <input type="email" required>
+                            <label for="email">Email</label>
+                            <input type="email" id="email" value="{{ current_user.email }}" readonly>
                         </div>
 
                         <div class="form-group">
-                            <label>Subject</label>
-                            <input type="text" required>
+                            <label for="subject">Subject</label>
+                            <input type="text" id="subject" name="subject" maxlength="255" value="{{ form_subject or '' }}" required>
                         </div>
 
                         <div class="form-group">
-                            <label>Message</label>
-                            <textarea placeholder="How can we help you?" required></textarea>
+                            <label for="message">Message</label>
+                            <textarea id="message" name="message" maxlength="5000" placeholder="How can we help you?" required>{{ form_message or '' }}</textarea>
                         </div>
 
                         <button type="submit" class="btn">Send Message</button>

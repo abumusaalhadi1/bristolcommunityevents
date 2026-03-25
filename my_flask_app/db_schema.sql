@@ -60,6 +60,24 @@ CREATE TABLE payments (
   FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)
 );
 
+CREATE TABLE contact_messages (
+  message_id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  sender_name VARCHAR(255) NOT NULL,
+  sender_email VARCHAR(255) NOT NULL,
+  sender_phone VARCHAR(50),
+  subject VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  admin_reply TEXT,
+  replied_by INT NULL,
+  replied_at DATETIME NULL,
+  user_deleted_at DATETIME NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'New',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (replied_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE testimonials (
   id INT PRIMARY KEY AUTO_INCREMENT,
   content TEXT,

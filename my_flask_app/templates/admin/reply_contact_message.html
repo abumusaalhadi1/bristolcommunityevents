@@ -1,0 +1,80 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Reply to Message | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Reply to Message</h1>
+        <div style="opacity: .8;">#{{ contact_message.message_id }} - {{ contact_message.subject }}</div>
+    </div>
+    <div style="display:flex; gap:.5rem; flex-wrap: wrap;">
+        <a class="btn" href="{{ url_for('admin_contact_messages') }}" style="width: auto;">Back to Messages</a>
+        <form method="POST" action="{{ url_for('admin_delete_contact_message', message_id=contact_message.message_id) }}" onsubmit="return confirm('Delete this contact message?');">
+            <input type="hidden" name="next" value="{{ next_url }}" />
+            <button type="submit" class="btn" style="width: auto; background: #b42318;">Delete</button>
+        </form>
+    </div>
+</div>
+
+<div class="receipt-grid">
+    <section class="receipt-card">
+        <h2>Submission</h2>
+        <div class="account-summary">
+            <div class="account-row">
+                <span>Name</span>
+                <strong>{{ contact_message.sender_name }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Email</span>
+                <strong>{{ contact_message.sender_email }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Phone</span>
+                <strong>{{ contact_message.sender_phone or '-' }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Status</span>
+                <strong><span class="status-badge status-{{ contact_message.status|lower }}">{{ contact_message.status }}</span></strong>
+            </div>
+            <div class="account-row">
+                <span>Submitted</span>
+                <strong>{{ contact_message.created_at.strftime('%B %d, %Y %H:%M') if contact_message.created_at else '-' }}</strong>
+            </div>
+            {% if contact_message.replied_at %}
+            <div class="account-row">
+                <span>Replied</span>
+                <strong>{{ contact_message.replied_at.strftime('%B %d, %Y %H:%M') }}</strong>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="account-divider"></div>
+
+        <h3>Message</h3>
+        <div class="message-content">{{ contact_message.message }}</div>
+    </section>
+
+    <section class="receipt-card">
+        <h2>Reply</h2>
+        <form method="POST" class="admin-form">
+            <input type="hidden" name="next" value="{{ next_url }}" />
+            <div class="form-group">
+                <label for="admin_reply">Reply text</label>
+                <textarea id="admin_reply" name="admin_reply" maxlength="5000" required>{{ admin_reply_text }}</textarea>
+            </div>
+
+            <div style="display:flex; gap:.5rem; flex-wrap: wrap;">
+                <button type="submit" class="btn" style="width: auto;">Save Reply</button>
+                <a class="btn" href="{{ url_for('admin_contact_messages') }}" style="width: auto; background: #2c3e50;">Cancel</a>
+            </div>
+        </form>
+
+        {% if contact_message.admin_reply %}
+        <div class="account-divider"></div>
+        <h3>Current Reply</h3>
+        <div class="message-content">{{ contact_message.admin_reply }}</div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

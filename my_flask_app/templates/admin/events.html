@@ -9,7 +9,7 @@
 </div>
 
 <form method="GET" action="{{ url_for('admin_events') }}" class="admin-filters">
-    <div class="form-group" style="min-width: 240px; flex: 1;">
+    <div class="form-group" style="min-width: 180px; flex: 1 1 180px;">
         <label>Search</label>
         <input type="text" name="q" value="{{ q }}" placeholder="Event, venue, category, location..." />
     </div>
@@ -36,7 +36,7 @@
         <input type="date" name="date_to" value="{{ date_to }}" />
     </div>
 
-    <div style="display:flex; gap:.5rem; align-items:flex-end;">
+    <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
         <button type="submit" class="btn" style="width: auto;">Filter</button>
         <a class="btn" href="{{ url_for('admin_events') }}" style="width: auto; background: #2c3e50;">Clear</a>
     </div>

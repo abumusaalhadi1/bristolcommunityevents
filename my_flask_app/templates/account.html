@@ -1,0 +1,155 @@
+{% extends "layout.html" %}
+
+{% block title %}Account | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main class="container page-section">
+    <div class="page-header">
+        <div>
+            <h1>Account</h1>
+            <p>View your profile and update your name, phone number, or password.</p>
+        </div>
+        <div class="account-actions">
+            <a class="btn" href="{{ url_for('events') }}">Browse Events</a>
+            {% if is_admin %}
+                <a class="btn" href="{{ url_for('admin_dashboard') }}" style="background: #2c3e50;">Admin Dashboard</a>
+            {% else %}
+                <a class="btn" href="{{ url_for('my_bookings') }}" style="background: #2c3e50;">My Bookings</a>
+            {% endif %}
+            <a class="btn" href="{{ url_for('contact') }}" style="background: #1a5276;">Contact Us</a>
+            <a class="btn" href="{{ url_for('logout') }}" style="background: #b42318;">Logout</a>
+        </div>
+    </div>
+
+    <div class="account-grid">
+        <div class="account-column">
+            <section class="account-card">
+                <h2>Profile Overview</h2>
+                <div class="account-summary">
+                    <div class="account-row">
+                        <span>Name</span>
+                        <strong>{{ account_user.full_name }}</strong>
+                    </div>
+                    <div class="account-row">
+                        <span>Email</span>
+                        <strong>{{ account_user.email }}</strong>
+                    </div>
+                    <div class="account-row">
+                        <span>Phone</span>
+                        <strong>{{ account_user.phone or '-' }}</strong>
+                    </div>
+                    {% if is_admin %}
+                    <div class="account-row">
+                        <span>Role</span>
+                        <strong>Administrator</strong>
+                    </div>
+                    {% endif %}
+                    <div class="account-row">
+                        <span>Joined</span>
+                        <strong>{{ account_user.created_at.strftime('%B %d, %Y') if account_user.created_at else '-' }}</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="account-card">
+                <h2>Your Contact Messages</h2>
+                <p style="margin-bottom: 1rem; color: #52606d;">Replies from the Bristol Community Events team will appear here.</p>
+
+                {% if contact_messages %}
+                    <div class="message-list">
+                        {% for message in contact_messages %}
+                        <article class="message-card">
+                            <div class="message-card-head">
+                                <div>
+                                    <h3 style="margin: 0 0 0.2rem;">{{ message.subject }}</h3>
+                                    <div class="message-meta">
+                                        Sent {{ message.created_at.strftime('%B %d, %Y %H:%M') if message.created_at else '-' }}
+                                    </div>
+                                </div>
+                                <span class="status-badge status-{{ message.status|lower }}">{{ message.status }}</span>
+                            </div>
+
+                            <div class="message-card-grid">
+                                <div>
+                                    <div class="message-label">Your message</div>
+                                    <div class="message-content">{{ message.message }}</div>
+                                </div>
+                                <div class="message-card-reply {% if not message.admin_reply %}is-empty{% endif %}">
+                                    <div class="message-label">Admin reply</div>
+                                    {% if message.admin_reply %}
+                                        <div class="message-content">{{ message.admin_reply }}</div>
+                                        <div class="message-meta">
+                                            Replied {{ message.replied_at.strftime('%B %d, %Y %H:%M') if message.replied_at else 'recently' }}
+                                            {% if message.replied_by_name %}
+                                                by {{ message.replied_by_name }}
+                                            {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <div class="message-meta">Waiting for a reply.</div>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <div class="message-card-actions">
+                                <form method="POST" action="{{ url_for('account_delete_contact_message', message_id=message.message_id) }}" onsubmit="return confirm('Remove this message from your profile? It will still be available to admins until they delete it.');">
+                                    <button type="submit" class="message-delete-btn">Delete from profile</button>
+                                </form>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No contact messages yet. Use the Contact Us button above to send one.</p>
+                {% endif %}
+            </section>
+        </div>
+
+        <section class="account-card">
+            <h2>Edit Profile</h2>
+            <form method="POST" class="account-form">
+                <input type="hidden" name="action" value="profile" />
+                <div class="form-group">
+                    <label for="full_name">Full Name</label>
+                    <input type="text" id="full_name" name="full_name" value="{{ account_user.full_name }}" required />
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" value="{{ account_user.email }}" readonly />
+                    <small>Email cannot be changed from this page.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="phone">Phone Number</label>
+                    <input type="tel" id="phone" name="phone" value="{{ account_user.phone or '' }}" placeholder="Enter phone number" />
+                </div>
+
+                <button type="submit" class="btn">Save Profile</button>
+            </form>
+
+            <div class="account-divider"></div>
+
+            <h2>Change Password</h2>
+            <form method="POST" class="account-form">
+                <input type="hidden" name="action" value="password" />
+                <div class="form-group">
+                    <label for="current_password">Current Password</label>
+                    <input type="password" id="current_password" name="current_password" required />
+                </div>
+
+                <div class="form-group">
+                    <label for="new_password">New Password</label>
+                    <input type="password" id="new_password" name="new_password" minlength="8" required />
+                </div>
+
+                <div class="form-group">
+                    <label for="confirm_password">Confirm New Password</label>
+                    <input type="password" id="confirm_password" name="confirm_password" minlength="8" required />
+                </div>
+
+                <button type="submit" class="btn">Change Password</button>
+            </form>
+        </section>
+    </div>
+</main>
+{% endblock %}

@@ -107,6 +107,38 @@
                 {% endif %}
             </div>
 
+            {% if total_pages > 1 %}
+            <div class="events-pagination">
+                <div class="events-pagination-info">
+                    Showing {{ start_item }}-{{ end_item }} of {{ total_events }} events
+                </div>
+
+                <div class="events-pagination-links">
+                    {% if pagination_prev_url %}
+                        <a class="events-page-link" href="{{ pagination_prev_url }}">Previous</a>
+                    {% else %}
+                        <span class="events-page-link disabled">Previous</span>
+                    {% endif %}
+
+                    {% for item in pagination_links %}
+                        {% if item['type'] == 'ellipsis' %}
+                            <span class="events-page-ellipsis">...</span>
+                        {% elif item['page'] == page %}
+                            <span class="events-page-link active" aria-current="page">{{ item['page'] }}</span>
+                        {% else %}
+                            <a class="events-page-link" href="{{ item['url'] }}">{{ item['page'] }}</a>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if pagination_next_url %}
+                        <a class="events-page-link" href="{{ pagination_next_url }}">Next</a>
+                    {% else %}
+                        <span class="events-page-link disabled">Next</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
         </div>
 <!-- Venues Section -->
         <section class="venues-section">

@@ -9,11 +9,11 @@
 </div>
 
 <form method="GET" action="{{ url_for('admin_users') }}" class="admin-filters">
-    <div class="form-group" style="min-width: 260px; flex: 1;">
+    <div class="form-group" style="min-width: 180px; flex: 1 1 180px;">
         <label>Search</label>
         <input type="text" name="q" value="{{ q }}" placeholder="Name or email..." />
     </div>
-    <div style="display:flex; gap:.5rem; align-items:flex-end;">
+    <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
         <button type="submit" class="btn" style="width: auto;">Search</button>
         <a class="btn" href="{{ url_for('admin_users') }}" style="width: auto; background: #2c3e50;">Clear</a>
     </div>
