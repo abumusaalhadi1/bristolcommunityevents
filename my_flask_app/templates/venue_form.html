@@ -1,0 +1,40 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}{{ page_title }} | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <h1 style="margin: 0;">{{ page_title }}</h1>
+    <a class="btn" href="{{ url_for('admin_venues') }}" style="width: auto; background: #2c3e50;">Back</a>
+</div>
+
+<div class="auth-container" style="margin: 1rem auto 0; max-width: 760px;">
+    <form method="POST" action="{{ action_url }}">
+        <div class="form-group">
+            <label for="venue_name">Venue Name *</label>
+            <input type="text" id="venue_name" name="venue_name" value="{{ venue.venue_name|default('', true) }}" required />
+        </div>
+
+        <div class="form-group">
+            <label for="address">Address</label>
+            <input type="text" id="address" name="address" value="{{ venue.address|default('', true) }}" placeholder="Street, building, or area" />
+        </div>
+
+        <div class="form-group">
+            <label for="city">City</label>
+            <input type="text" id="city" name="city" value="{{ venue.city|default('', true) }}" placeholder="Bristol" />
+        </div>
+
+        <div class="form-group">
+            <label for="capacity">Capacity *</label>
+            <input type="number" id="capacity" name="capacity" min="1" max="100000" step="1" value="{{ venue.capacity if venue.capacity is not none else '' }}" required />
+            <small>Required for the venue listing and admin overview.</small>
+        </div>
+
+        <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;">
+            <button type="submit" class="btn">{{ submit_label }}</button>
+            <a href="{{ url_for('admin_venues') }}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

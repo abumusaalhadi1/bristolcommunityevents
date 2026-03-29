@@ -1,0 +1,99 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Admin Receipts | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Receipts</h1>
+        <p style="margin: .25rem 0 0; opacity: .8;">Track booking receipts by booking ID and receipt reference.</p>
+    </div>
+    <div style="opacity: .8;">Total: {{ total_receipts }}</div>
+</div>
+
+<form method="GET" action="{{ url_for('admin_receipts') }}" class="admin-filters">
+    <div class="form-group" style="min-width: 220px; flex: 1 1 220px;">
+        <label>Search</label>
+        <input type="text" name="q" value="{{ q }}" placeholder="Booking ID, receipt ref, name, email, or event..." />
+    </div>
+    <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
+        <button type="submit" class="btn" style="width: auto;">Filter</button>
+        <a class="btn" href="{{ url_for('admin_receipts') }}" style="width: auto; background: #2c3e50;">Clear</a>
+    </div>
+</form>
+
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>Booking</th>
+                <th>Receipt Ref</th>
+                <th>User</th>
+                <th>Email</th>
+                <th>Event</th>
+                <th>Booked At</th>
+                <th>Payment</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th style="width: 180px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for receipt in receipts %}
+            <tr>
+                <td>#{{ receipt.booking_id }}</td>
+                <td>{{ receipt.receipt_reference }}</td>
+                <td>{{ receipt.full_name }}</td>
+                <td>{{ receipt.email }}</td>
+                <td>{{ receipt.event_name }}</td>
+                <td>{{ receipt.booked_at.strftime('%B %d, %Y %H:%M') if receipt.booked_at else '-' }}</td>
+                <td>{{ receipt.payment_status }}</td>
+                <td>&pound;{{ "%.2f"|format(receipt.amount or 0) }}</td>
+                <td><span class="status-badge status-{{ receipt.status|lower }}">{{ receipt.status }}</span></td>
+                <td>
+                    <div class="admin-actions">
+                        <a class="admin-link" href="{{ url_for('booking_receipt', booking_id=receipt.booking_id) }}">View</a>
+                        <a class="admin-link" href="{{ url_for('download_booking_receipt', booking_id=receipt.booking_id) }}">PDF</a>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="10">No receipts match your search.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="events-pagination" style="margin-top: 1.5rem;">
+    <div class="events-pagination-info">
+        Showing {{ start_item }}-{{ end_item }} of {{ total_receipts }} receipts
+    </div>
+    <div class="events-pagination-links">
+        {% if pagination_prev_url %}
+            <a class="events-page-link" href="{{ pagination_prev_url }}">Previous</a>
+        {% else %}
+            <span class="events-page-link disabled">Previous</span>
+        {% endif %}
+
+        {% for item in pagination_links %}
+            {% if item['type'] == 'ellipsis' %}
+                <span class="events-page-ellipsis">...</span>
+            {% elif item['page'] == page %}
+                <span class="events-page-link active" aria-current="page">{{ item['page'] }}</span>
+            {% else %}
+                <a class="events-page-link" href="{{ item['url'] }}">{{ item['page'] }}</a>
+            {% endif %}
+        {% endfor %}
+
+        {% if pagination_next_url %}
+            <a class="events-page-link" href="{{ pagination_next_url }}">Next</a>
+        {% else %}
+            <span class="events-page-link disabled">Next</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

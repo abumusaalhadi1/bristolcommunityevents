@@ -18,6 +18,7 @@
                 <thead>
                     <tr>
                         <th>ID</th>
+                        <th>Receipt Ref</th>
                         <th>Event</th>
                         <th>Event Date</th>
                         <th>Booked At</th>
@@ -32,6 +33,7 @@
                     {% for booking in bookings %}
                     <tr>
                         <td>#{{ booking.booking_id }}</td>
+                        <td>{{ booking.receipt_reference }}</td>
                         <td>{{ booking.event_name }}</td>
                         <td>{{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}</td>
                         <td>{{ booking.booked_at.strftime('%B %d, %Y %H:%M') if booking.booked_at else '-' }}</td>
@@ -42,6 +44,7 @@
                         <td>
                             <div class="admin-actions">
                                 <a class="admin-link" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}">Receipt</a>
+                                <a class="admin-link" href="{{ url_for('download_booking_receipt', booking_id=booking.booking_id) }}">Download PDF</a>
                                 {% if booking.status != 'Cancelled' %}
                                 <form method="POST" action="{{ url_for('cancel_booking', booking_id=booking.booking_id) }}" onsubmit="return confirm('Cancel this booking?');">
                                     <button type="submit" class="admin-danger">Cancel</button>
@@ -52,7 +55,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="9">You do not have any bookings yet.</td>
+                        <td colspan="10">You do not have any bookings yet.</td>
                     </tr>
                     {% endfor %}
                 </tbody>

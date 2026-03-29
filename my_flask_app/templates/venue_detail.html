@@ -1,0 +1,84 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ venue.venue_name }} | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main>
+    <section class="page-section">
+        <div class="container">
+            <div class="page-header venue-detail-header">
+                <div>
+                    <h1>{{ venue.venue_name }}</h1>
+                    <p>
+                        {{ venue.address or 'Address not listed' }}
+                        {% if venue.city %} | {{ venue.city }}{% endif %}
+                    </p>
+                </div>
+                <a class="btn btn-soft" href="{{ url_for('venues_page') }}" style="width: auto;">Back to Venues</a>
+            </div>
+
+            <div class="venue-detail-layout">
+                <article class="venue-detail-card">
+                    <p class="review-kicker">Venue overview</p>
+                    <h2>At a glance</h2>
+
+                    <div class="venue-detail-meta">
+                        <div class="venue-detail-item">
+                            <span class="venue-detail-label">Capacity</span>
+                            <strong>{{ venue.capacity }}</strong>
+                        </div>
+                        <div class="venue-detail-item">
+                            <span class="venue-detail-label">Total events</span>
+                            <strong>{{ venue.total_events }}</strong>
+                        </div>
+                        <div class="venue-detail-item">
+                            <span class="venue-detail-label">Upcoming events</span>
+                            <strong>{{ venue.upcoming_events }}</strong>
+                        </div>
+                        <div class="venue-detail-item">
+                            <span class="venue-detail-label">Next event</span>
+                            <strong>
+                                {% if venue.next_event_date %}
+                                    {{ venue.next_event_date.strftime('%B %d, %Y') }}
+                                {% else %}
+                                    Coming soon
+                                {% endif %}
+                            </strong>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="venue-detail-card">
+                    <p class="review-kicker">Events here</p>
+                    <h2>Upcoming and recent events</h2>
+
+                    {% if venue_events %}
+                        <div class="venue-event-list">
+                            {% for event in venue_events %}
+                                <article class="venue-event-item">
+                                    <h3>{{ event.event_name }}</h3>
+                                    <p>{{ event.event_date.strftime('%B %d, %Y') if event.event_date else '-' }}</p>
+                                    <p>
+                                        {{ event.category_name or 'General' }}
+                                        {% if event.location %} | {{ event.location }}{% endif %}
+                                    </p>
+                                    <p>
+                                        {% if event.price is none or event.price == 0 %}
+                                            Free entry
+                                        {% else %}
+                                            &pound;{{ "%.2f"|format(event.price) }}
+                                        {% endif %}
+                                    </p>
+                                    <a class="admin-link" href="{{ url_for('event_detail', event_id=event.event_id) }}">View event</a>
+                                </article>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p>This venue does not have any linked events yet.</p>
+                    {% endif %}
+                </article>
+            </div>
+        </div>
+    </section>
+</main>
+{% endblock %}

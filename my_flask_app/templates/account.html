@@ -7,7 +7,7 @@
     <div class="page-header">
         <div>
             <h1>Account</h1>
-            <p>View your profile and update your name, phone number, or password.</p>
+            <p>View your profile, manage your messages, and keep track of your reviews.</p>
         </div>
         <div class="account-actions">
             <a class="btn" href="{{ url_for('events') }}">Browse Events</a>
@@ -100,6 +100,47 @@
                     </div>
                 {% else %}
                     <p>No contact messages yet. Use the Contact Us button above to send one.</p>
+                {% endif %}
+            </section>
+
+            <section class="account-card">
+                <h2>Your Reviews</h2>
+                <p style="margin-bottom: 1rem; color: #52606d;">Reviews you submit start as pending until an admin approves them.</p>
+
+                {% if user_reviews %}
+                    <div class="message-list">
+                        {% for review in user_reviews %}
+                        <article class="message-card">
+                            <div class="message-card-head">
+                                <div>
+                                    <h3 style="margin: 0 0 0.2rem;">Review submitted {{ review.created_at.strftime('%B %d, %Y %H:%M') if review.created_at else '-' }}</h3>
+                                    <div class="message-meta">
+                                        Rating: {{ review.rating }}/5
+                                        {% if review.updated_at %}
+                                            | Updated {{ review.updated_at.strftime('%B %d, %Y %H:%M') if review.updated_at else '-' }}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <span class="status-badge status-{{ review.status|lower }}">{{ review.status }}</span>
+                            </div>
+
+                            <div class="rating" style="margin-bottom: 0.75rem;" aria-label="{{ review.rating }} out of 5 stars">
+                                {% for _ in range(review.rating) %}&#9733;{% endfor %}
+                            </div>
+
+                            <div class="message-content">{{ review.content }}</div>
+
+                            <div class="message-card-actions" style="gap: 0.6rem;">
+                                <a class="btn" href="{{ url_for('account_edit_review', review_id=review.review_id) }}" style="width: auto; background: #2c3e50;">Edit</a>
+                                <form method="POST" action="{{ url_for('account_delete_review', review_id=review.review_id) }}" onsubmit="return confirm('Delete this review?');">
+                                    <button type="submit" class="message-delete-btn">Delete review</button>
+                                </form>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No reviews yet. Use the review form on the home page to add one.</p>
                 {% endif %}
             </section>
         </div>

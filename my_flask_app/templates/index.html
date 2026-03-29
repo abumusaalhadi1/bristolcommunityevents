@@ -44,7 +44,7 @@
                         <div class="stat-label">Happy Attendees</div>
                     </div>
                     <div class="stat">
-                        <div class="stat-number">95%</div>
+                        <div class="stat-number">{{ satisfaction_rate }}%</div>
                         <div class="stat-label">Satisfaction Rate</div>
                     </div>
                 </div>
@@ -82,9 +82,9 @@
             <section style="margin: 3rem 0;">
                 <h2>Featured Events</h2>
                 {% set event_images = [
-                    'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80',
-                    'https://images.unsplash.com/photo-1563089145-599997674d42?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80',
-                    'https://images.unsplash.com/photo-1574629810360-7efbbe195018'
+                    url_for('static', filename='images/events/event-card-1.jpg'),
+                    url_for('static', filename='images/events/event-card-5.jpg'),
+                    url_for('static', filename='images/events/event-card-7.jpg')
                 ] %}
                 {% if featured_events %}
                 <div class="events-grid">
@@ -120,79 +120,109 @@
             </section>
         </div>
 
-        <!-- Reviews Section -->
-        <!-- Reviews Section -->
         <section class="reviews-section">
             <div class="container">
-                <h2 style="text-align: center;">What Our Attendees Say</h2>
-                <div class="reviews-grid">
-                    {% if testimonials %}
-                        {% for testimonial in testimonials %}
-                        <div class="review-card">
+                <div class="reviews-intro">
+                    <h2>What Our Attendees Say</h2>
+                    <p>Read and share experiences from the Bristol community.</p>
+                </div>
+
+                {% if reviews %}
+                    <div class="reviews-grid">
+                        {% for review in reviews %}
+                        <article class="review-card">
                             <div class="reviewer">
                                 <div class="reviewer-avatar">
-                                    {{ testimonial.author_initials or (testimonial.author_name[:2]|upper) }}
+                                    {{ review.author_initials or (review.author_name[:2]|upper) }}
                                 </div>
                                 <div>
-                                    <h4>{{ testimonial.author_name }}</h4>
-                                    <div class="rating">
-                                        {% if testimonial.rating %}
-                                            {% for _ in range(testimonial.rating) %}&#9733;{% endfor %}
-                                        {% else %}
-                                            &#9733;&#9733;&#9733;&#9733;&#9733;
-                                        {% endif %}
+                                    <h4>{{ review.author_name }}</h4>
+                                    <div class="rating" aria-label="{{ review.rating }} out of 5 stars">
+                                        {% for _ in range(review.rating) %}&#9733;{% endfor %}
                                     </div>
                                 </div>
                             </div>
-                            <p>"{{ testimonial.content }}"</p>
-                        </div>
+                            <p>"{{ review.content }}"</p>
+                        </article>
                         {% endfor %}
-                    {% else %}
-                    <div class="review-card">
-                        <div class="reviewer">
-                            <div class="reviewer-avatar">SJ</div>
-                            <div>
-                                <h4>Sarah Johnson</h4>
-                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                            </div>
-                        </div>
-                        <p>"Found the perfect music festival through this platform! The booking process was smooth and
-                            the event exceeded expectations."</p>
                     </div>
-                    <div class="review-card">
-                        <div class="reviewer">
-                            <div class="reviewer-avatar">MJ</div>
-                            <div>
-                                <h4>Mike Thompson</h4>
-                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                            </div>
-                        </div>
-                        <p>"As a student, the discounts are amazing! I've attended 3 events this month alone. Highly
-                            recommended!"</p>
+                {% else %}
+                    <p style="text-align:center; margin-top: 1rem;">No approved reviews yet. Once a review is approved, it will appear here.</p>
+                {% endif %}
+
+                {% if review_total_pages > 1 %}
+                <div class="events-pagination" style="margin-top: 1.5rem;">
+                    <div class="events-pagination-info">
+                        Showing {{ review_start_item }}-{{ review_end_item }} of {{ review_total_count }} approved reviews
                     </div>
-                    <div class="review-card">
-                        <div class="reviewer">
-                            <div class="reviewer-avatar">ER</div>
-                            <div>
-                                <h4>Emma Roberts</h4>
-                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                            </div>
-                        </div>
-                        <p>"Great variety of events. The venue information is accurate and the capacity limits ensure
-                            comfortable experiences."</p>
+
+                    <div class="events-pagination-links">
+                        {% if review_page > 1 %}
+                            <a class="events-page-link" href="{{ url_for('home', review_page=review_page - 1) }}">Previous</a>
+                        {% else %}
+                            <span class="events-page-link disabled">Previous</span>
+                        {% endif %}
+
+                        {% for item in review_pagination_links %}
+                            {% if item['type'] == 'ellipsis' %}
+                                <span class="events-page-ellipsis">...</span>
+                            {% elif item['page'] == review_page %}
+                                <span class="events-page-link active" aria-current="page">{{ item['page'] }}</span>
+                            {% else %}
+                                <a class="events-page-link" href="{{ item['url'] }}">{{ item['page'] }}</a>
+                            {% endif %}
+                        {% endfor %}
+
+                        {% if review_page < review_total_pages %}
+                            <a class="events-page-link" href="{{ url_for('home', review_page=review_page + 1) }}">Next</a>
+                        {% else %}
+                            <span class="events-page-link disabled">Next</span>
+                        {% endif %}
                     </div>
-                    <div class="review-card">
-                        <div class="reviewer">
-                            <div class="reviewer-avatar">DL</div>
-                            <div>
-                                <h4>David Lewis</h4>
-                                <div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-                            </div>
-                        </div>
-                        <p>"The student discount made events so affordable! Attended 5 different events this semester
-                            without breaking the bank. The booking system is super easy to use!"</p>
-                    </div>
-                    {% endif %}
+                </div>
+                {% endif %}
+
+                <div class="review-submit-wrap">
+                    <article class="review-submit-card">
+                        {% if is_authenticated %}
+                            <p class="review-kicker">Share your experience</p>
+                            <h3>Post a review as {{ current_user.full_name }}</h3>
+                            <p>Your review will be marked pending until an admin approves it.</p>
+
+                            <form class="review-form" method="POST" action="{{ url_for('submit_review') }}">
+                                <div class="form-group">
+                                    <label for="rating">Your rating</label>
+                                    <select id="rating" name="rating" required>
+                                        <option value="5">5 stars - Excellent</option>
+                                        <option value="4">4 stars - Great</option>
+                                        <option value="3">3 stars - Good</option>
+                                        <option value="2">2 stars - Fair</option>
+                                        <option value="1">1 star - Needs work</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="content">Your review</label>
+                                    <textarea
+                                        id="content"
+                                        name="content"
+                                        rows="5"
+                                        maxlength="1000"
+                                        placeholder="Tell everyone what you enjoyed about Bristol Community Events..."
+                                        required
+                                    ></textarea>
+                                    <small>Keep it under 1000 characters.</small>
+                                </div>
+
+                                <button type="submit" class="btn">Add Review</button>
+                            </form>
+                        {% else %}
+                            <p class="review-kicker">Share your experience</p>
+                            <h3>Log in to add your review</h3>
+                            <p>Signed-in users can leave a review, then track its status from their account page.</p>
+                            <a class="btn" href="{{ url_for('login', next=url_for('account')) }}">Login to Review</a>
+                        {% endif %}
+                    </article>
                 </div>
             </div>
         </section>

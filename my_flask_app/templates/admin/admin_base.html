@@ -14,8 +14,11 @@
             <nav class="admin-nav">
                 <a href="{{ url_for('admin_dashboard') }}" class="{% if request.endpoint == 'admin_dashboard' %}active{% endif %}">Dashboard</a>
                 <a href="{{ url_for('admin_bookings') }}" class="{% if request.endpoint in ['admin_bookings','admin_edit_booking'] %}active{% endif %}">Bookings</a>
+                <a href="{{ url_for('admin_receipts') }}" class="{% if request.endpoint == 'admin_receipts' %}active{% endif %}">Receipts</a>
                 <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">Users</a>
                 <a href="{{ url_for('admin_contact_messages') }}" class="{% if request.endpoint in ['admin_contact_messages','admin_reply_contact_message'] %}active{% endif %}">Messages</a>
+                <a href="{{ url_for('admin_reviews') }}" class="{% if request.endpoint in ['admin_reviews','admin_approve_review','admin_reject_review','admin_delete_review'] %}active{% endif %}">Reviews</a>
+                <a href="{{ url_for('admin_venues') }}" class="{% if request.endpoint in ['admin_venues','add_venue','update_venue','delete_venue'] %}active{% endif %}">Venues</a>
                 <a href="{{ url_for('admin_events') }}" class="{% if request.endpoint in ['admin_events','add_event','update_event','delete_event'] %}active{% endif %}">Events</a>
                 <a href="{{ url_for('admin_logout') }}">Logout</a>
             </nav>

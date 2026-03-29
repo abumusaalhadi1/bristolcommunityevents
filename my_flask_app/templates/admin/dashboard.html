@@ -9,6 +9,8 @@
         <a class="btn" href="{{ url_for('admin_bookings') }}" style="width: auto;">View Bookings</a>
         <a class="btn" href="{{ url_for('admin_users') }}" style="width: auto;">View Users</a>
         <a class="btn" href="{{ url_for('admin_contact_messages') }}" style="width: auto;">View Messages</a>
+        <a class="btn" href="{{ url_for('admin_venues') }}" style="width: auto;">View Venues</a>
+        <a class="btn" href="{{ url_for('admin_reviews') }}" style="width: auto;">View Reviews</a>
     </div>
 </div>
 
@@ -16,6 +18,10 @@
     <div class="admin-card">
         <div class="label">Events</div>
         <div class="value">{{ events_count }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Venues</div>
+        <div class="value">{{ venues_count }}</div>
     </div>
     <div class="admin-card">
         <div class="label">Users</div>
@@ -29,6 +35,15 @@
         <div class="label">Messages</div>
         <div class="value">{{ messages_count }}</div>
         <div style="margin-top: .3rem; color: #5d6b7b; font-weight: 600;">{{ new_messages_count }} new</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Reviews</div>
+        <div class="value">{{ reviews_count }}</div>
+        <div style="margin-top: .3rem; color: #5d6b7b; font-weight: 600;">{{ pending_reviews_count }} pending</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Approved Reviews</div>
+        <div class="value">{{ approved_reviews_count }}</div>
     </div>
     <div class="admin-card">
         <div class="label">Tickets Sold</div>
@@ -76,6 +91,61 @@
             {% else %}
             <tr>
                 <td colspan="8">No contact messages found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<h2 style="margin-top: 1.25rem;">Recent reviews</h2>
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Author</th>
+                <th>Rating</th>
+                <th>Status</th>
+                <th>Submitted</th>
+                <th>Content</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for review in recent_reviews %}
+            <tr>
+                <td>#{{ review.review_id }}</td>
+                <td>{{ review.user_full_name or review.author_name }}</td>
+                <td>
+                    <div class="rating" aria-label="{{ review.rating }} out of 5 stars">
+                        {% for _ in range(review.rating) %}&#9733;{% endfor %}
+                    </div>
+                </td>
+                <td><span class="status-badge status-{{ review.status|lower }}">{{ review.status }}</span></td>
+                <td>{{ review.created_at.strftime('%B %d, %Y %H:%M') if review.created_at else '-' }}</td>
+                <td>{{ review.content|truncate(120, True, '...') }}</td>
+                <td class="admin-actions">
+                    {% if review.status != 'Approved' %}
+                        <form method="POST" action="{{ url_for('admin_approve_review', review_id=review.review_id) }}" onsubmit="return confirm('Approve this review?');">
+                            <input type="hidden" name="next" value="{{ url_for('admin_dashboard') }}" />
+                            <button type="submit" class="admin-link" style="border: none; background: transparent; padding: 0;">Approve</button>
+                        </form>
+                    {% endif %}
+                    {% if review.status != 'Rejected' %}
+                        <form method="POST" action="{{ url_for('admin_reject_review', review_id=review.review_id) }}" onsubmit="return confirm('Reject this review?');">
+                            <input type="hidden" name="next" value="{{ url_for('admin_dashboard') }}" />
+                            <button type="submit" class="admin-link" style="border: none; background: transparent; padding: 0;">Reject</button>
+                        </form>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('admin_delete_review', review_id=review.review_id) }}" onsubmit="return confirm('Delete this review?');">
+                        <input type="hidden" name="next" value="{{ url_for('admin_dashboard') }}" />
+                        <button type="submit" class="admin-danger">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7">No reviews found.</td>
             </tr>
             {% endfor %}
         </tbody>

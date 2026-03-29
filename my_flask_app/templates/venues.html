@@ -1,0 +1,47 @@
+{% extends "layout.html" %}
+
+{% block title %}Venues | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main>
+    <section class="page-section">
+        <div class="container">
+            <div class="page-header">
+                <div>
+                    <h1>All Venues</h1>
+                    <p>Discover the spaces that bring Bristol's events to life.</p>
+                </div>
+                <a class="btn btn-soft" href="{{ url_for('events') }}" style="width: auto;">Back to Events</a>
+            </div>
+
+            {% if venues %}
+                <div class="venues-grid">
+                    {% for venue in venues %}
+                    <article class="venue-card">
+                        <div class="venue-card-head">
+                            <div>
+                                <h3>{{ venue.venue_name }}</h3>
+                                <p class="venue-location">{{ venue.address or 'Address not listed' }}</p>
+                            </div>
+                            <span class="venue-city">{{ venue.city or 'Bristol' }}</span>
+                        </div>
+
+                        <div class="venue-capacity">Capacity: {{ venue.capacity }}</div>
+                        <p class="venue-summary">{{ venue.total_events }} total event{{ 's' if venue.total_events|int != 1 else '' }}</p>
+                        <p class="venue-summary">
+                            Upcoming:
+                            {{ venue.upcoming_events }} event{{ 's' if venue.upcoming_events|int != 1 else '' }}
+                        </p>
+                        <div class="venue-actions">
+                            <a class="btn btn-soft" href="{{ url_for('venue_detail', venue_id=venue.venue_id) }}">See Details</a>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p style="text-align:center; margin-top: 1rem;">No venues have been added yet.</p>
+            {% endif %}
+        </div>
+    </section>
+</main>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Delete Venue | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Delete Venue</h1>
+        <p style="margin-top: .35rem; opacity: .8;">
+            {{ venue.venue_name }}
+        </p>
+    </div>
+    <a class="btn" href="{{ url_for('admin_venues') }}" style="width: auto; background: #2c3e50;">Back</a>
+</div>
+
+<div class="receipt-card" style="margin-top: 1rem;">
+    <p>Are you sure you want to delete this venue?</p>
+    <p><strong>Address:</strong> {{ venue.address or '-' }}</p>
+    <p><strong>City:</strong> {{ venue.city or '-' }}</p>
+    <p><strong>Capacity:</strong> {{ venue.capacity }}</p>
+    <p><strong>Total linked events:</strong> {{ venue.total_events }}</p>
+    <p><strong>Upcoming linked events:</strong> {{ venue.upcoming_events }}</p>
+    <p>
+        Deleting this venue will keep linked events, but their venue reference will be cleared.
+    </p>
+
+    <form method="POST" style="margin-top: 1rem; display:flex; gap:.75rem; flex-wrap: wrap;">
+        <button type="submit" class="btn" style="width: auto; background: #b42318;">Delete Venue</button>
+        <a class="btn" href="{{ url_for('admin_venues') }}" style="width: auto; background: #2c3e50;">Cancel</a>
+    </form>
+</div>
+{% endblock %}

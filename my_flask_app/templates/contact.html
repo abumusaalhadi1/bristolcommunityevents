@@ -59,18 +59,24 @@
 
                 <div class="contact-form">
                     <h2>Send Us a Message</h2>
-                    <p style="margin-bottom: 1rem; color: #52606d;">
-                        Messages are linked to your signed-in account and replies will appear on your profile.
-                    </p>
+                    {% if is_authenticated %}
+                        <p style="margin-bottom: 1rem; color: #52606d;">
+                            Messages are linked to your signed-in account and replies will appear on your profile.
+                        </p>
+                    {% else %}
+                        <p style="margin-bottom: 1rem; color: #52606d;">
+                            Log in to submit a message. Once you're signed in, your details will be attached automatically and replies will appear in your account.
+                        </p>
+                    {% endif %}
                     <form method="POST" action="{{ url_for('contact') }}">
                         <div class="form-group">
                             <label for="full_name">Full Name</label>
-                            <input type="text" id="full_name" value="{{ current_user.full_name }}" readonly>
+                            <input type="text" id="full_name" value="{{ current_user.full_name if is_authenticated else '' }}" readonly>
                         </div>
 
                         <div class="form-group">
                             <label for="email">Email</label>
-                            <input type="email" id="email" value="{{ current_user.email }}" readonly>
+                            <input type="email" id="email" value="{{ current_user.email if is_authenticated else '' }}" readonly>
                         </div>
 
                         <div class="form-group">
@@ -83,7 +89,14 @@
                             <textarea id="message" name="message" maxlength="5000" placeholder="How can we help you?" required>{{ form_message or '' }}</textarea>
                         </div>
 
-                        <button type="submit" class="btn">Send Message</button>
+                        {% if is_authenticated %}
+                            <button type="submit" class="btn">Send Message</button>
+                        {% else %}
+                            <button type="button" class="btn btn-disabled" disabled>Log in to Send Message</button>
+                            <p style="margin-top: .75rem; color: #52606d;">
+                                <a class="contact-login-link" href="{{ url_for('login', next=url_for('contact')) }}">Log in</a> to send your message.
+                            </p>
+                        {% endif %}
                     </form>
                 </div>
             </div>

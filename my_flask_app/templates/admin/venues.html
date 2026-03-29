@@ -1,0 +1,79 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Manage Venues | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Venues</h1>
+        <div style="opacity: .8;">Total: {{ total_venues }}</div>
+    </div>
+    <div style="display:flex; gap:.5rem; flex-wrap: wrap;">
+        <a class="btn" href="{{ url_for('add_venue') }}" style="width: auto;">Add Venue</a>
+        <a class="btn" href="{{ url_for('admin_dashboard') }}" style="width: auto; background: #2c3e50;">Back to Dashboard</a>
+    </div>
+</div>
+
+<form method="GET" action="{{ url_for('admin_venues') }}" class="admin-filters">
+    <div class="form-group" style="min-width: 220px; flex: 1 1 280px;">
+        <label>Search</label>
+        <input type="text" name="q" value="{{ q }}" placeholder="Venue name, address, or city..." />
+    </div>
+
+    <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
+        <button type="submit" class="btn" style="width: auto;">Filter</button>
+        <a class="btn" href="{{ url_for('admin_venues') }}" style="width: auto; background: #2c3e50;">Clear</a>
+    </div>
+</form>
+
+<div class="admin-table-wrap">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Location</th>
+                <th>Capacity</th>
+                <th>Events</th>
+                <th>Upcoming</th>
+                <th>Next Event</th>
+                <th style="width: 180px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for venue in venues %}
+            <tr>
+                <td>#{{ venue.venue_id }}</td>
+                <td>
+                    <div style="font-weight: 800;">{{ venue.venue_name }}</div>
+                    <div style="opacity: .8; font-size: .95rem;">
+                        {{ venue.address or 'Address not listed' }}
+                    </div>
+                </td>
+                <td>{{ venue.city or 'Bristol' }}</td>
+                <td>{{ venue.capacity }}</td>
+                <td>{{ venue.total_events }}</td>
+                <td>{{ venue.upcoming_events }}</td>
+                <td>
+                    {% if venue.next_event_date %}
+                        {{ venue.next_event_date.strftime('%B %d, %Y') }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="admin-actions">
+                        <a class="admin-link" href="{{ url_for('update_venue', venue_id=venue.venue_id) }}">Edit</a>
+                        <a class="admin-link" href="{{ url_for('delete_venue', venue_id=venue.venue_id) }}">Delete</a>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8">No venues found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

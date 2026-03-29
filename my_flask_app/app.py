@@ -1,7 +1,9 @@
 from datetime import datetime
+import io
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 import re
+import textwrap
 
 import mysql.connector
 from flask import (
@@ -37,6 +39,105 @@ BOOKING_STATUSES = ("Pending", "Confirmed", "Cancelled")
 CONTACT_MESSAGE_STATUSES = ("New", "Replied")
 PAYMENT_METHODS = {"paypal", "card", "bank"}
 ACTIVE_BOOKING_CONDITION = "COALESCE(status, 'Confirmed') <> 'Cancelled'"
+
+REVIEW_STATUS_PENDING = "Pending"
+REVIEW_STATUS_APPROVED = "Approved"
+REVIEW_STATUS_REJECTED = "Rejected"
+REVIEW_STATUSES = (
+    REVIEW_STATUS_PENDING,
+    REVIEW_STATUS_APPROVED,
+    REVIEW_STATUS_REJECTED,
+)
+
+DEFAULT_REVIEWS = [
+    {
+        "seed_key": "demo-john-smith",
+        "author_name": "John Smith",
+        "author_initials": "JS",
+        "rating": 5,
+        "content": "The event listings are easy to browse and the booking flow is quick. I found a great local concert in minutes.",
+        "status": REVIEW_STATUS_APPROVED,
+    },
+    {
+        "seed_key": "demo-emily-carter",
+        "author_name": "Emily Carter",
+        "author_initials": "EC",
+        "rating": 4,
+        "content": "Really solid experience overall. I liked how clearly the venues and dates were laid out, and checkout was straightforward.",
+        "status": REVIEW_STATUS_APPROVED,
+    },
+    {
+        "seed_key": "demo-david-brown",
+        "author_name": "David Brown",
+        "author_initials": "DB",
+        "rating": 5,
+        "content": "The student discounts made a big difference and the site made it simple to find something affordable.",
+        "status": REVIEW_STATUS_APPROVED,
+    },
+    {
+        "seed_key": "demo-aisha-rahman",
+        "author_name": "Aisha Rahman",
+        "author_initials": "AR",
+        "rating": 4,
+        "content": "Great mix of community events and live entertainment. The filters helped me find the right event fast.",
+        "status": REVIEW_STATUS_APPROVED,
+    },
+    {
+        "seed_key": "demo-sofia-patel",
+        "author_name": "Sofia Patel",
+        "author_initials": "SP",
+        "rating": 5,
+        "content": "I appreciated the clean layout and accurate event details. It felt easy to plan ahead.",
+        "status": REVIEW_STATUS_APPROVED,
+    },
+    {
+        "seed_key": "demo-daniel-green",
+        "author_name": "Daniel Green",
+        "author_initials": "DG",
+        "rating": 4,
+        "content": "Smooth booking and useful event info. I'd definitely use it again for local Bristol plans.",
+        "status": REVIEW_STATUS_APPROVED,
+    },
+]
+
+DEFAULT_VENUES = [
+    {
+        "venue_name": "Bristol City Centre Hall",
+        "address": "Broad Street",
+        "city": "Bristol",
+        "capacity": 500,
+    },
+    {
+        "venue_name": "Harbourside Gallery",
+        "address": "Dock Road",
+        "city": "Bristol",
+        "capacity": 300,
+    },
+    {
+        "venue_name": "Ashton Court Estate",
+        "address": "Ashton Court",
+        "city": "Bristol",
+        "capacity": 400,
+    },
+    {
+        "venue_name": "Bristol Indoor Arena",
+        "address": "Arena Road",
+        "city": "Bristol",
+        "capacity": 500,
+    },
+    {
+        "venue_name": "Harbourside Art Space",
+        "address": "Dock Street",
+        "city": "Bristol",
+        "capacity": 300,
+    },
+    {
+        "venue_name": "UWE Exhibition Hall",
+        "address": "Frenchay Campus",
+        "city": "Bristol",
+        "capacity": 400,
+    },
+]
 
 _db_initialized = False
 
@@ -152,12 +253,237 @@ def current_date():
     return current_datetime().date()
 
 
+def build_initials(full_name: str) -> str:
+    parts = [part for part in re.split(r"\s+", (full_name or "").strip()) if part]
+    if not parts:
+        return "CG"
+    if len(parts) == 1:
+        initials = re.sub(r"[^A-Za-z0-9]", "", parts[0])[:2].upper()
+        return initials or "CG"
+
+    initials = "".join(part[0] for part in parts[:2] if part and part[0].isalnum()).upper()
+    return initials or "CG"
+
+
+def normalize_review(review):
+    author_name = (review.get("author_name") or review.get("user_full_name") or "Community Guest").strip() or "Community Guest"
+    initials = (review.get("author_initials") or "").strip() or build_initials(author_name)
+
+    try:
+        rating = int(review.get("rating") or 5)
+    except (TypeError, ValueError):
+        rating = 5
+
+    status = (review.get("status") or REVIEW_STATUS_PENDING).strip().title()
+    if status not in REVIEW_STATUSES:
+        status = REVIEW_STATUS_PENDING
+
+    review["author_name"] = author_name
+    review["author_initials"] = initials or "CG"
+    review["rating"] = max(1, min(5, rating))
+    review["content"] = (review.get("content") or "").strip()
+    review["status"] = status
+    return review
+
+
+def lookup_user_id_by_name(cursor, full_name: str):
+    full_name = (full_name or "").strip()
+    if not full_name:
+        return None
+
+    cursor.execute(
+        """
+        SELECT user_id
+        FROM users
+        WHERE LOWER(full_name) = LOWER(%s)
+        LIMIT 2
+        """,
+        (full_name,),
+    )
+    matches = cursor.fetchall()
+    return matches[0]["user_id"] if len(matches) == 1 else None
+
+
+def seed_default_reviews(cursor):
+    cursor.execute(
+        """
+        SELECT seed_key
+        FROM reviews
+        WHERE seed_key IS NOT NULL AND TRIM(seed_key) <> ''
+        """
+    )
+    existing_seed_keys = {row["seed_key"] for row in cursor.fetchall()}
+
+    for seed in DEFAULT_REVIEWS:
+        seed_key = (seed.get("seed_key") or "").strip()
+        if not seed_key or seed_key in existing_seed_keys:
+            continue
+
+        author_name = (seed.get("author_name") or "Community Guest").strip() or "Community Guest"
+        now = current_datetime()
+        cursor.execute(
+            """
+            INSERT INTO reviews (
+                seed_key, user_id, author_name, author_initials, rating, content, status,
+                created_at, updated_at, reviewed_by, reviewed_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                seed_key[:64],
+                lookup_user_id_by_name(cursor, author_name),
+                author_name[:255],
+                (seed.get("author_initials") or build_initials(author_name))[:10],
+                int(seed.get("rating") or 5),
+                (seed.get("content") or "").strip(),
+                REVIEW_STATUS_APPROVED,
+                now,
+                now,
+                None,
+                now,
+            ),
+        )
+
+
+def fetch_reviews(
+    cursor,
+    *,
+    review_id=None,
+    user_id=None,
+    status=None,
+    q="",
+    limit=None,
+    offset=None,
+    public_only=False,
+    order_by=None,
+):
+    filters = []
+    params = []
+
+    if review_id is not None:
+        filters.append("r.review_id = %s")
+        params.append(review_id)
+
+    if user_id is not None:
+        filters.append("r.user_id = %s")
+        params.append(user_id)
+
+    if status:
+        filters.append("r.status = %s")
+        params.append(status)
+    elif public_only:
+        filters.append("r.status = %s")
+        params.append(REVIEW_STATUS_APPROVED)
+
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            "(r.author_name LIKE %s OR r.content LIKE %s OR u.full_name LIKE %s OR u.email LIKE %s)"
+        )
+        params.extend([like, like, like, like])
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+    order_clause = (
+        order_by
+        or (
+            "COALESCE(r.reviewed_at, r.created_at) DESC, r.review_id DESC"
+            if public_only
+            else "r.created_at DESC, r.review_id DESC"
+        )
+    )
+    limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
+    if offset is not None:
+        limit_clause += f" OFFSET {int(offset)}"
+
+    cursor.execute(
+        f"""
+        SELECT r.review_id, r.user_id, r.author_name, r.author_initials, r.rating,
+               r.content, r.status, r.created_at, r.updated_at, r.reviewed_by, r.reviewed_at,
+               u.full_name AS user_full_name, u.email AS user_email,
+               moderator.full_name AS reviewed_by_name
+        FROM reviews r
+        LEFT JOIN users u ON r.user_id = u.user_id
+        LEFT JOIN users moderator ON r.reviewed_by = moderator.user_id
+        WHERE {where_clause}
+        ORDER BY {order_clause}
+        {limit_clause}
+        """,
+        tuple(params),
+    )
+    return [normalize_review(review) for review in cursor.fetchall()]
+
+
+def count_reviews(
+    cursor,
+    *,
+    user_id=None,
+    status=None,
+    q="",
+    public_only=False,
+):
+    filters = []
+    params = []
+
+    if user_id is not None:
+        filters.append("r.user_id = %s")
+        params.append(user_id)
+
+    if status:
+        filters.append("r.status = %s")
+        params.append(status)
+    elif public_only:
+        filters.append("r.status = %s")
+        params.append(REVIEW_STATUS_APPROVED)
+
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            "(r.author_name LIKE %s OR r.content LIKE %s OR u.full_name LIKE %s OR u.email LIKE %s)"
+        )
+        params.extend([like, like, like, like])
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM reviews r
+        LEFT JOIN users u ON r.user_id = u.user_id
+        WHERE {where_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchone()["count"] or 0
+
+
+def calculate_satisfaction_rate(cursor):
+    cursor.execute(
+        """
+        SELECT COALESCE(AVG(rating), 0) AS average_rating
+        FROM reviews
+        WHERE status = %s
+        """,
+        (REVIEW_STATUS_APPROVED,),
+    )
+    row = cursor.fetchone() or {}
+    average_rating = row.get("average_rating") or 0
+
+    try:
+        average_rating = float(average_rating)
+    except (TypeError, ValueError):
+        average_rating = 0.0
+
+    return max(0, min(100, int(round(average_rating * 20))))
+
+
 def booking_booked_at_sql(alias="b"):
     return f"COALESCE({alias}.created_at, TIMESTAMP({alias}.booking_date, '00:00:00'))"
 
 
 def fetch_venues_and_categories(cursor):
-    cursor.execute("SELECT venue_id, venue_name FROM venues ORDER BY venue_name")
+    cursor.execute(
+        "SELECT venue_id, venue_name, address, city, capacity FROM venues ORDER BY venue_name"
+    )
     venues = cursor.fetchall()
     cursor.execute(
         "SELECT category_id, category_name FROM categories ORDER BY category_name"
@@ -166,8 +492,100 @@ def fetch_venues_and_categories(cursor):
     return venues, categories
 
 
+def fetch_venue_overview(cursor, *, venue_id=None, q="", limit=None, offset=None):
+    filters = []
+    params = []
+
+    if venue_id is not None:
+        filters.append("v.venue_id = %s")
+        params.append(venue_id)
+
+    if q:
+        like = f"%{q}%"
+        filters.append("(v.venue_name LIKE %s OR v.address LIKE %s OR v.city LIKE %s)")
+        params.extend([like, like, like])
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = f" LIMIT {int(limit)}"
+        if offset is not None:
+            limit_clause += f" OFFSET {int(offset)}"
+
+    cursor.execute(
+        f"""
+        SELECT v.venue_id, v.venue_name, v.address, v.city, v.capacity,
+               COALESCE(stats.total_events, 0) AS total_events,
+               COALESCE(stats.upcoming_events, 0) AS upcoming_events,
+               stats.next_event_date
+        FROM venues v
+        LEFT JOIN (
+            SELECT venue_id,
+                   COUNT(*) AS total_events,
+                   SUM(CASE WHEN event_date >= CURDATE() THEN 1 ELSE 0 END) AS upcoming_events,
+                   MIN(CASE WHEN event_date >= CURDATE() THEN event_date END) AS next_event_date
+            FROM events
+            GROUP BY venue_id
+        ) stats ON v.venue_id = stats.venue_id
+        WHERE {where_clause}
+        ORDER BY v.venue_name ASC
+        {limit_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchall()
+
+
+def fetch_venue_details(cursor, venue_id: int):
+    venues = fetch_venue_overview(cursor, venue_id=venue_id, limit=1)
+    venue = venues[0] if venues else None
+    if not venue:
+        return None, []
+
+    cursor.execute(
+        """
+        SELECT e.event_id, e.event_name, e.event_date, e.location, e.price,
+               e.event_capacity, c.category_name
+        FROM events e
+        LEFT JOIN categories c ON e.category_id = c.category_id
+        WHERE e.venue_id = %s
+        ORDER BY
+            CASE WHEN e.event_date >= CURDATE() THEN 0 ELSE 1 END,
+            e.event_date ASC,
+            e.event_id DESC
+        """,
+        (venue_id,),
+    )
+    events = cursor.fetchall()
+    return venue, events
+
+
 def venue_exists(cursor, venue_id: int) -> bool:
     cursor.execute("SELECT 1 FROM venues WHERE venue_id=%s", (venue_id,))
+    return cursor.fetchone() is not None
+
+
+def venue_name_exists(cursor, venue_name: str, exclude_venue_id=None) -> bool:
+    venue_name = (venue_name or "").strip()
+    if not venue_name:
+        return False
+
+    params = [venue_name]
+    exclusion = ""
+    if exclude_venue_id is not None:
+        exclusion = " AND venue_id <> %s"
+        params.append(exclude_venue_id)
+
+    cursor.execute(
+        f"""
+        SELECT 1
+        FROM venues
+        WHERE LOWER(TRIM(venue_name)) = LOWER(TRIM(%s))
+        {exclusion}
+        LIMIT 1
+        """,
+        tuple(params),
+    )
     return cursor.fetchone() is not None
 
 
@@ -196,6 +614,106 @@ def rename_column_if_needed(cursor, table_name: str, old_name: str, new_name: st
         cursor.execute(
             f"ALTER TABLE {table_name} CHANGE COLUMN `{old_name}` `{new_name}` {definition}"
         )
+
+
+def create_venues_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS venues (
+            venue_id INT PRIMARY KEY AUTO_INCREMENT,
+            venue_name VARCHAR(150) NOT NULL,
+            address VARCHAR(255) NULL,
+            city VARCHAR(100) NULL,
+            capacity INT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def seed_default_venues(cursor):
+    cursor.execute("SELECT COUNT(*) AS count FROM venues")
+    venue_count = cursor.fetchone()["count"] or 0
+    if venue_count > 0:
+        return
+
+    for seed in DEFAULT_VENUES:
+        cursor.execute(
+            """
+            INSERT INTO venues (venue_name, address, city, capacity)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (
+                seed["venue_name"][:150],
+                seed["address"][:255],
+                seed["city"][:100],
+                int(seed.get("capacity") or 0),
+            ),
+        )
+
+
+def ensure_venues_table(cursor):
+    if not table_exists(cursor, "venues"):
+        create_venues_table(cursor)
+    else:
+        add_column_if_missing(cursor, "venues", "address", "VARCHAR(255) NULL AFTER venue_name")
+        add_column_if_missing(cursor, "venues", "city", "VARCHAR(100) NULL AFTER address")
+        add_column_if_missing(
+            cursor,
+            "venues",
+            "capacity",
+            "INT NOT NULL DEFAULT 0 AFTER city",
+        )
+        cursor.execute(
+            """
+            UPDATE venues
+            SET city = 'Bristol'
+            WHERE city IS NULL OR TRIM(city) = ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE venues
+            SET capacity = 0
+            WHERE capacity IS NULL OR capacity < 0
+            """
+        )
+
+    seed_default_venues(cursor)
+
+
+def ensure_event_venue_foreign_key(cursor):
+    cursor.execute(
+        """
+        SELECT rc.CONSTRAINT_NAME, rc.DELETE_RULE
+        FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+        JOIN information_schema.KEY_COLUMN_USAGE kcu
+          ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
+         AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND kcu.TABLE_NAME = 'events'
+          AND kcu.COLUMN_NAME = 'venue_id'
+          AND kcu.REFERENCED_TABLE_NAME = 'venues'
+        GROUP BY rc.CONSTRAINT_NAME, rc.DELETE_RULE
+        """
+    )
+    fk_rows = cursor.fetchall()
+    needs_rebuild = not fk_rows or any((row.get("DELETE_RULE") or "").upper() != "SET NULL" for row in fk_rows)
+
+    if not needs_rebuild:
+        return
+
+    for fk in fk_rows:
+        cursor.execute(f"ALTER TABLE events DROP FOREIGN KEY `{fk['CONSTRAINT_NAME']}`")
+
+    cursor.execute("ALTER TABLE events MODIFY COLUMN venue_id INT NULL")
+
+    cursor.execute(
+        """
+        ALTER TABLE events
+        ADD CONSTRAINT fk_events_venue
+        FOREIGN KEY (venue_id) REFERENCES venues(venue_id) ON DELETE SET NULL
+        """
+    )
 
 
 def create_contact_messages_table(cursor):
@@ -249,6 +767,147 @@ def ensure_contact_messages_table(cursor):
         "created_at",
         "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
     )
+
+
+def create_reviews_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reviews (
+            review_id INT PRIMARY KEY AUTO_INCREMENT,
+            seed_key VARCHAR(64) NULL,
+            user_id INT NULL,
+            author_name VARCHAR(255) NOT NULL DEFAULT 'Community Guest',
+            author_initials VARCHAR(10) NOT NULL DEFAULT 'CG',
+            rating TINYINT UNSIGNED NOT NULL DEFAULT 5,
+            content TEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NULL,
+            reviewed_by INT NULL,
+            reviewed_at DATETIME NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+            FOREIGN KEY (reviewed_by) REFERENCES users(user_id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def ensure_reviews_table(cursor):
+    if not table_exists(cursor, "reviews"):
+        create_reviews_table(cursor)
+    else:
+        add_column_if_missing(cursor, "reviews", "seed_key", "VARCHAR(64) NULL AFTER review_id")
+        add_column_if_missing(cursor, "reviews", "user_id", "INT NULL AFTER review_id")
+        add_column_if_missing(
+            cursor,
+            "reviews",
+            "author_name",
+            "VARCHAR(255) NOT NULL DEFAULT 'Community Guest' AFTER user_id",
+        )
+        add_column_if_missing(
+            cursor,
+            "reviews",
+            "author_initials",
+            "VARCHAR(10) NOT NULL DEFAULT 'CG' AFTER author_name",
+        )
+        add_column_if_missing(
+            cursor,
+            "reviews",
+            "rating",
+            "TINYINT UNSIGNED NOT NULL DEFAULT 5 AFTER author_initials",
+        )
+        add_column_if_missing(cursor, "reviews", "content", "TEXT NULL AFTER rating")
+        add_column_if_missing(
+            cursor,
+            "reviews",
+            "status",
+            "VARCHAR(20) NOT NULL DEFAULT 'Pending' AFTER content",
+        )
+        add_column_if_missing(
+            cursor,
+            "reviews",
+            "created_at",
+            "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER status",
+        )
+        add_column_if_missing(cursor, "reviews", "updated_at", "DATETIME NULL AFTER created_at")
+        add_column_if_missing(cursor, "reviews", "reviewed_by", "INT NULL AFTER updated_at")
+        add_column_if_missing(cursor, "reviews", "reviewed_at", "DATETIME NULL AFTER reviewed_by")
+
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET author_name = 'Community Guest'
+            WHERE author_name IS NULL OR TRIM(author_name) = ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET author_initials = 'CG'
+            WHERE author_initials IS NULL OR TRIM(author_initials) = ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET rating = 5
+            WHERE rating IS NULL OR rating < 1 OR rating > 5
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET status = 'Pending'
+            WHERE status IS NULL OR TRIM(status) = '' OR status NOT IN ('Pending', 'Approved', 'Rejected')
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET reviewed_at = created_at
+            WHERE status = 'Approved' AND reviewed_at IS NULL
+            """
+        )
+
+    cursor.execute("SHOW TABLES LIKE %s", ("testimonials",))
+    legacy_testimonials = cursor.fetchone() is not None
+    cursor.execute("SELECT COUNT(*) AS count FROM reviews")
+    review_count = cursor.fetchone()["count"] or 0
+
+    if legacy_testimonials and review_count == 0:
+        cursor.execute(
+            """
+            SELECT *
+            FROM testimonials
+            ORDER BY created_at ASC, id ASC
+            """
+        )
+        legacy_rows = cursor.fetchall()
+        for legacy in legacy_rows:
+            author_name = (legacy.get("author_name") or "Community Guest").strip() or "Community Guest"
+            cursor.execute(
+                """
+                INSERT INTO reviews (
+                    seed_key, user_id, author_name, author_initials, rating, content, status,
+                    created_at, updated_at, reviewed_by, reviewed_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    None,
+                    lookup_user_id_by_name(cursor, author_name),
+                    author_name[:255],
+                    (legacy.get("author_initials") or build_initials(author_name))[:10],
+                    int(legacy.get("rating") or 5),
+                    (legacy.get("content") or "").strip(),
+                    REVIEW_STATUS_APPROVED,
+                    legacy.get("created_at") or current_datetime(),
+                    legacy.get("created_at") or current_datetime(),
+                    None,
+                    legacy.get("created_at") or current_datetime(),
+                ),
+        )
+    seed_default_reviews(cursor)
 
 
 def fetch_contact_messages(
@@ -369,7 +1028,10 @@ def initialize_database():
             "payment_method",
             "VARCHAR(50) NULL AFTER amount",
         )
+        ensure_venues_table(cursor)
+        ensure_event_venue_foreign_key(cursor)
         ensure_contact_messages_table(cursor)
+        ensure_reviews_table(cursor)
 
         cursor.execute("UPDATE users SET role=%s WHERE role IS NULL OR role=''", (ROLE_USER,))
         cursor.execute(
@@ -620,6 +1282,88 @@ def fetch_booking_details(cursor, booking_id: int):
     return cursor.fetchone()
 
 
+def count_booking_receipts(cursor, q=""):
+    filters = []
+    params = []
+
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            """
+            (
+                CAST(b.booking_id AS CHAR) LIKE %s
+                OR CONCAT('BCE-', LPAD(b.booking_id, 6, '0')) LIKE %s
+                OR u.full_name LIKE %s
+                OR u.email LIKE %s
+                OR e.event_name LIKE %s
+            )
+            """
+        )
+        params.extend([like, like, like, like, like])
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+
+    cursor.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM bookings b
+        JOIN users u ON b.user_id = u.user_id
+        JOIN events e ON b.event_id = e.event_id
+        WHERE {where_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchone()["count"] or 0
+
+
+def fetch_booking_receipts(cursor, *, q="", limit=None, offset=None):
+    filters = []
+    params = []
+
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            """
+            (
+                CAST(b.booking_id AS CHAR) LIKE %s
+                OR CONCAT('BCE-', LPAD(b.booking_id, 6, '0')) LIKE %s
+                OR u.full_name LIKE %s
+                OR u.email LIKE %s
+                OR e.event_name LIKE %s
+            )
+            """
+        )
+        params.extend([like, like, like, like, like])
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+    booked_at_sql = booking_booked_at_sql()
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = f" LIMIT {int(limit)}"
+        if offset is not None:
+            limit_clause += f" OFFSET {int(offset)}"
+
+    cursor.execute(
+        f"""
+        SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at,
+               b.tickets, b.is_student, b.discount_applied,
+               COALESCE(b.status, 'Confirmed') AS status,
+               u.full_name, u.email,
+               e.event_id, e.event_name, e.event_date,
+               p.amount, p.payment_method, COALESCE(p.payment_status, 'Pending') AS payment_status
+        FROM bookings b
+        JOIN users u ON b.user_id = u.user_id
+        JOIN events e ON b.event_id = e.event_id
+        LEFT JOIN payments p ON b.booking_id = p.booking_id
+        WHERE {where_clause}
+        ORDER BY booked_at DESC, b.booking_id DESC
+        {limit_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchall()
+
+
 def can_access_booking(booking) -> bool:
     if not booking or not g.current_user:
         return False
@@ -634,6 +1378,262 @@ def payment_status_for_booking(status: str) -> str:
     if status == "Pending":
         return "Pending"
     return "Paid"
+
+
+def booking_receipt_reference(booking_id: int) -> str:
+    return f"BCE-{int(booking_id):06d}"
+
+
+def format_receipt_date(value) -> str:
+    if not value:
+        return "-"
+    if hasattr(value, "strftime"):
+        return value.strftime("%B %d, %Y")
+    text = str(value).strip()
+    return text or "-"
+
+
+def format_receipt_datetime(value) -> str:
+    if not value:
+        return "-"
+    if hasattr(value, "strftime"):
+        return value.strftime("%B %d, %Y %H:%M")
+    text = str(value).strip()
+    return text or "-"
+
+
+def normalize_receipt_text(value) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, Decimal):
+        value = f"{value:.2f}"
+    elif hasattr(value, "strftime"):
+        value = format_receipt_datetime(value)
+    else:
+        value = str(value)
+    text = value.strip()
+    return text or "-"
+
+
+def pdf_escape_text(value) -> str:
+    text = normalize_receipt_text(value).encode("latin-1", "replace").decode("latin-1")
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def pdf_approx_text_width(text, size: float) -> float:
+    return len(normalize_receipt_text(text)) * size * 0.52
+
+
+def pdf_wrap_text(text, max_chars: int):
+    paragraphs = normalize_receipt_text(text).splitlines()
+    wrapped = []
+    for paragraph in paragraphs:
+        if not paragraph:
+            wrapped.append("")
+            continue
+        wrapped.extend(
+            textwrap.wrap(
+                paragraph,
+                width=max_chars,
+                break_long_words=True,
+                break_on_hyphens=False,
+            )
+            or [""]
+        )
+    return wrapped or [""]
+
+
+def pdf_add_text(ops, x, y, text, *, size=11, bold=False):
+    font = "/F2" if bold else "/F1"
+    ops.append(f"BT {font} {size} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ({pdf_escape_text(text)}) Tj ET")
+
+
+def pdf_add_line(ops, x1, y1, x2, y2, *, width=0.8, gray=0.82):
+    ops.append(f"{gray:.3f} G")
+    ops.append(f"{width:.2f} w")
+    ops.append(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
+
+
+def pdf_add_paragraph(ops, x, y, text, *, size=11, leading=14, max_chars=84, bold=False):
+    for line in pdf_wrap_text(text, max_chars):
+        pdf_add_text(ops, x, y, line, size=size, bold=bold)
+        y -= leading
+    return y
+
+
+def build_booking_receipt_pdf(booking):
+    booking_id = int(booking["booking_id"])
+    receipt_reference = booking_receipt_reference(booking_id)
+    page_width = 612.0
+    page_height = 792.0
+    margin = 54.0
+    header_height = 108.0
+    body_top = page_height - header_height - 28.0
+    body_width_chars = max(50, int((page_width - (2 * margin)) / (11 * 0.52)))
+    ops = []
+
+    # Branded banner
+    ops.append("0.10 0.32 0.47 rg")
+    ops.append(f"0 {page_height - header_height:.2f} {page_width:.2f} {header_height:.2f} re f")
+    ops.append("1 1 1 rg")
+    pdf_add_text(ops, margin, page_height - 38, "Bristol", size=20, bold=True)
+    ops.append("0.953 0.612 0.071 rg")
+    pdf_add_text(
+        ops,
+        margin + pdf_approx_text_width("Bristol ", 20),
+        page_height - 38,
+        "Community Events",
+        size=20,
+        bold=True,
+    )
+    ops.append("1 1 1 rg")
+    pdf_add_text(ops, margin, page_height - 62, "Booking Receipt", size=12, bold=False)
+    pdf_add_text(ops, margin, page_height - 78, "Official confirmation and payment record", size=9, bold=False)
+
+    receipt_text = f"Receipt No. {receipt_reference}"
+    booked_text = f"Booked {format_receipt_datetime(booking.get('booked_at') or booking.get('created_at'))}"
+    receipt_x = max(margin, page_width - margin - pdf_approx_text_width(receipt_text, 11))
+    booked_x = max(margin, page_width - margin - pdf_approx_text_width(booked_text, 10))
+    pdf_add_text(ops, receipt_x, page_height - 38, receipt_text, size=11, bold=True)
+    pdf_add_text(ops, booked_x, page_height - 60, booked_text, size=10, bold=False)
+    ops.append("0 0 0 rg")
+
+    y = body_top
+    y = pdf_add_paragraph(
+        ops,
+        margin,
+        y,
+        f"Official confirmation for booking #{booking_id}",
+        size=12,
+        leading=15,
+        max_chars=body_width_chars,
+        bold=True,
+    )
+    y = pdf_add_paragraph(
+        ops,
+        margin,
+        y - 2,
+        f"Reference: {receipt_reference}",
+        size=10,
+        leading=13,
+        max_chars=body_width_chars,
+    )
+    y -= 6
+    pdf_add_line(ops, margin, y, page_width - margin, y, width=0.9, gray=0.78)
+    y -= 18
+
+    def add_section(title):
+        nonlocal y
+        ops.append("0.10 0.32 0.47 rg")
+        y = pdf_add_paragraph(
+            ops,
+            margin,
+            y,
+            title,
+            size=13,
+            leading=16,
+            max_chars=body_width_chars,
+            bold=True,
+        )
+        ops.append("0 0 0 rg")
+        y -= 4
+        pdf_add_line(ops, margin, y, page_width - margin, y, width=0.6, gray=0.88)
+        y -= 16
+
+    def add_field(label, value):
+        nonlocal y
+        y = pdf_add_paragraph(
+            ops,
+            margin,
+            y,
+            f"{label}: {normalize_receipt_text(value)}",
+            size=11,
+            leading=14,
+            max_chars=body_width_chars,
+        )
+        y -= 2
+
+    add_section("Booking Summary")
+    add_field("Booking ID", booking_id)
+    add_field("Receipt Reference", receipt_reference)
+    add_field("Status", booking.get("status") or "Confirmed")
+    add_field("Payment Status", booking.get("payment_status") or "Pending")
+    add_field("Booked At", format_receipt_datetime(booking.get("booked_at") or booking.get("created_at")))
+    add_field("Tickets", booking.get("tickets") or 0)
+    add_field("Payment Method", (booking.get("payment_method") or "card").title())
+    add_field("Total Paid", f"£{to_money(booking.get('amount')):.2f}")
+
+    y -= 8
+    add_section("Attendee Details")
+    add_field("Name", booking.get("full_name"))
+    add_field("Email", booking.get("email"))
+    add_field("Phone", booking.get("phone") or "-")
+    add_field("Role", (booking.get("role") or "user").title())
+
+    y -= 8
+    add_section("Event Details")
+    add_field("Event", booking.get("event_name"))
+    add_field("Date", format_receipt_date(booking.get("event_date")))
+    add_field("Venue", booking.get("venue_name") or "-")
+    add_field("Location", booking.get("location") or booking.get("address") or "-")
+    add_field("Category", booking.get("category_name") or "-")
+
+    y -= 8
+    pdf_add_line(ops, margin, y, page_width - margin, y, width=0.7, gray=0.82)
+    y -= 18
+    ops.append("0.10 0.32 0.47 rg")
+    y = pdf_add_paragraph(
+        ops,
+        margin,
+        y,
+        "Thank you for booking with Bristol Community Events.",
+        size=11,
+        leading=14,
+        max_chars=body_width_chars,
+        bold=True,
+    )
+    ops.append("0 0 0 rg")
+    y = pdf_add_paragraph(
+        ops,
+        margin,
+        y - 2,
+        "Please keep this receipt for your records. For help, contact us at 42 Queen Square, Bristol BS1 4QR or +44 (0) 117 123 4567.",
+        size=10,
+        leading=13,
+        max_chars=body_width_chars,
+    )
+
+    content_stream = "\n".join(ops).encode("latin-1", "replace")
+    objects = [
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+        b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+        f"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 {page_width:.0f} {page_height:.0f}] "
+        f"/Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>".encode("ascii"),
+        b"<< /Length " + str(len(content_stream)).encode("ascii") + b" >>\nstream\n" + content_stream + b"\nendstream",
+        b"<< /Type /Catalog /Pages 3 0 R >>",
+    ]
+
+    pdf = io.BytesIO()
+    pdf.write(b"%PDF-1.4\n")
+    offsets = []
+    for obj_number, body in enumerate(objects, start=1):
+        offsets.append(pdf.tell())
+        pdf.write(f"{obj_number} 0 obj\n".encode("ascii"))
+        pdf.write(body)
+        pdf.write(b"\nendobj\n")
+
+    xref_start = pdf.tell()
+    pdf.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.write(b"0000000000 65535 f \n")
+    for offset in offsets:
+        pdf.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 6 0 R >>\nstartxref\n{xref_start}\n%%EOF".encode(
+            "ascii"
+        )
+    )
+    return pdf.getvalue()
 
 
 def default_login_redirect():
@@ -1318,19 +2318,31 @@ def home():
     )
     featured_events = cursor.fetchall()
 
-    try:
-        cursor.execute("SELECT * FROM testimonials ORDER BY created_at DESC LIMIT 4")
-        testimonials = cursor.fetchall()
-        for testimonial in testimonials:
-            author_name = testimonial.get("author_name") or "Community Guest"
-            initials = testimonial.get("author_initials")
-            if not initials:
-                initials = "".join(part[0] for part in author_name.split()[:2]).upper()
-            testimonial["author_name"] = author_name
-            testimonial["author_initials"] = initials or "CG"
-            testimonial["rating"] = int(testimonial.get("rating") or 5)
-    except mysql.connector.Error:
-        testimonials = []
+    review_page = parse_positive_int(request.args.get("review_page"), 1)
+    reviews_per_page = 6
+    approved_reviews_count = count_reviews(cursor, public_only=True)
+    satisfaction_rate = calculate_satisfaction_rate(cursor)
+    review_total_pages = max(1, (approved_reviews_count + reviews_per_page - 1) // reviews_per_page)
+    review_page = min(review_page, review_total_pages)
+    review_offset = (review_page - 1) * reviews_per_page
+    reviews = fetch_reviews(
+        cursor,
+        public_only=True,
+        limit=reviews_per_page,
+        offset=review_offset,
+    )
+    review_pagination_links = []
+    for item in build_pagination_pages(review_page, review_total_pages):
+        if item is None:
+            review_pagination_links.append({"type": "ellipsis"})
+        else:
+            review_pagination_links.append(
+                {
+                    "type": "page",
+                    "page": item,
+                    "url": url_for("home", review_page=item),
+                }
+            )
 
     cursor.close()
     conn.close()
@@ -1342,8 +2354,84 @@ def home():
         attendees_count=total_tickets,
         categories=categories,
         featured_events=featured_events,
-        testimonials=testimonials,
+        reviews=reviews,
+        review_page=review_page,
+        review_total_pages=review_total_pages,
+        review_total_count=approved_reviews_count,
+        review_start_item=((review_page - 1) * reviews_per_page + 1) if approved_reviews_count else 0,
+        review_end_item=min(review_page * reviews_per_page, approved_reviews_count) if approved_reviews_count else 0,
+        review_pagination_links=review_pagination_links,
+        satisfaction_rate=satisfaction_rate,
     )
+
+
+@app.route("/reviews", methods=["GET", "POST"])
+def submit_review():
+    if request.method == "GET":
+        return redirect(url_for("home"))
+
+    if not g.current_user:
+        flash("Please log in to share a review.", "error")
+        return redirect(url_for("login", next=url_for("account")))
+
+    review_content = request.form.get("content", "").strip()
+    rating_raw = request.form.get("rating", "").strip()
+
+    if not review_content:
+        flash("Please write a review before submitting.", "error")
+        return redirect(url_for("home"))
+
+    if len(review_content) > 1000:
+        flash("Reviews must be 1000 characters or fewer.", "error")
+        return redirect(url_for("home"))
+
+    try:
+        rating = int(rating_raw)
+    except (TypeError, ValueError):
+        rating = 0
+
+    if rating < 1 or rating > 5:
+        flash("Please choose a rating between 1 and 5 stars.", "error")
+        return redirect(url_for("home"))
+
+    author_name = (g.current_user.get("full_name") or "Community Guest").strip() or "Community Guest"
+    author_initials = build_initials(author_name)
+    now = current_datetime()
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO reviews (
+                user_id, author_name, author_initials, rating, content, status,
+                created_at, updated_at, reviewed_by, reviewed_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                g.current_user["user_id"],
+                author_name[:255],
+                author_initials[:10],
+                rating,
+                review_content,
+                REVIEW_STATUS_PENDING,
+                now,
+                now,
+                None,
+                None,
+            ),
+        )
+        conn.commit()
+        flash("Your review has been submitted and is pending approval.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for("account"))
 
 
 @app.route("/events")
@@ -1373,6 +2461,9 @@ def events():
         limit=per_page,
         offset=offset,
     )
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    venues = fetch_venue_overview(cursor)
 
     pagination_base_args = {}
     if category:
@@ -1399,9 +2490,13 @@ def events():
                 }
             )
 
+    cursor.close()
+    conn.close()
+
     return render_template(
         "events.html",
         events=events_rows,
+        venues=venues,
         categories=categories,
         q=q,
         category=category,
@@ -1415,6 +2510,39 @@ def events():
         pagination_links=pagination_links,
         pagination_prev_url=url_for("events", page=page - 1, **pagination_base_args) if page > 1 else None,
         pagination_next_url=url_for("events", page=page + 1, **pagination_base_args) if page < total_pages else None,
+    )
+
+
+@app.route("/venues")
+def venues_page():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    venues = fetch_venue_overview(cursor)
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "venues.html",
+        venues=venues,
+        total_venues=len(venues),
+    )
+
+
+@app.route("/venues/<int:venue_id>")
+def venue_detail(venue_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    venue, venue_events = fetch_venue_details(cursor, venue_id)
+    cursor.close()
+    conn.close()
+
+    if not venue:
+        return render_template("404.html"), 404
+
+    return render_template(
+        "venue_detail.html",
+        venue=venue,
+        venue_events=venue_events,
     )
 
 
@@ -1537,6 +2665,8 @@ def my_bookings():
         (g.current_user["user_id"],),
     )
     bookings = cursor.fetchall()
+    for booking in bookings:
+        booking["receipt_reference"] = booking_receipt_reference(booking["booking_id"])
     cursor.close()
     conn.close()
     return render_template("my_bookings.html", bookings=bookings)
@@ -1628,6 +2758,11 @@ def account():
         user_id=account_user["user_id"],
         include_user_deleted=False,
     )
+    user_reviews = fetch_reviews(
+        cursor,
+        user_id=account_user["user_id"],
+        order_by="r.created_at DESC, r.review_id DESC",
+    )
 
     cursor.close()
     conn.close()
@@ -1636,6 +2771,7 @@ def account():
         "account.html",
         account_user=account_user,
         contact_messages=contact_messages,
+        user_reviews=user_reviews,
     )
 
 
@@ -1673,6 +2809,111 @@ def account_delete_contact_message(message_id):
     return redirect(url_for("account"))
 
 
+@app.route("/account/reviews/<int:review_id>/edit", methods=["GET", "POST"])
+@login_required
+def account_edit_review(review_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    review_rows = fetch_reviews(
+        cursor,
+        review_id=review_id,
+        user_id=g.current_user["user_id"],
+        limit=1,
+    )
+
+    if not review_rows:
+        cursor.close()
+        conn.close()
+        flash("Review not found.", "error")
+        return redirect(url_for("account"))
+
+    review = review_rows[0]
+
+    if request.method == "POST":
+        rating_raw = request.form.get("rating", "").strip()
+        content = request.form.get("content", "").strip()
+
+        try:
+            rating = int(rating_raw)
+        except (TypeError, ValueError):
+            rating = 0
+
+        if rating < 1 or rating > 5:
+            flash("Please choose a rating between 1 and 5 stars.", "error")
+        elif not content:
+            flash("Please enter your review text.", "error")
+        elif len(content) > 1000:
+            flash("Reviews must be 1000 characters or fewer.", "error")
+        else:
+            now = current_datetime()
+            try:
+                cursor.execute(
+                    """
+                    UPDATE reviews
+                    SET author_name=%s,
+                        author_initials=%s,
+                        rating=%s,
+                        content=%s,
+                        status=%s,
+                        updated_at=%s,
+                        reviewed_by=NULL,
+                        reviewed_at=NULL
+                    WHERE review_id=%s AND user_id=%s
+                    """,
+                    (
+                        (g.current_user.get("full_name") or "Community Guest").strip() or "Community Guest",
+                        build_initials(g.current_user.get("full_name") or "Community Guest")[:10],
+                        rating,
+                        content,
+                        REVIEW_STATUS_PENDING,
+                        now,
+                        review_id,
+                        g.current_user["user_id"],
+                    ),
+                )
+                conn.commit()
+                flash("Review updated and sent back for approval.", "success")
+                cursor.close()
+                conn.close()
+                return redirect(url_for("account"))
+            except mysql.connector.Error as err:
+                conn.rollback()
+                flash(f"Database error: {err}", "error")
+
+        review["rating"] = rating if 1 <= rating <= 5 else review["rating"]
+        review["content"] = content or review["content"]
+
+    cursor.close()
+    conn.close()
+    return render_template("review_form.html", review=review, next_url=url_for("account"))
+
+
+@app.route("/account/reviews/<int:review_id>/delete", methods=["POST"])
+@login_required
+def account_delete_review(review_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM reviews WHERE review_id=%s AND user_id=%s",
+            (review_id, g.current_user["user_id"]),
+        )
+
+        if cursor.rowcount == 0:
+            flash("Review not found or you do not have permission to delete it.", "error")
+        else:
+            conn.commit()
+            flash("Review deleted.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for("account"))
+
+
 @app.route("/bookings/<int:booking_id>/receipt")
 @login_required
 def booking_receipt(booking_id):
@@ -1687,7 +2928,11 @@ def booking_receipt(booking_id):
     if not can_access_booking(booking):
         abort(403)
 
-    return render_template("booking_receipt.html", booking=booking)
+    return render_template(
+        "booking_receipt.html",
+        booking=booking,
+        receipt_reference=booking_receipt_reference(booking_id),
+    )
 
 
 @app.route("/bookings/<int:booking_id>/receipt/download")
@@ -1704,35 +2949,14 @@ def download_booking_receipt(booking_id):
     if not can_access_booking(booking):
         abort(403)
 
-    booked_at = booking.get("booked_at") or booking.get("created_at") or booking.get("payment_date")
-    lines = [
-        "Bristol Community Events Booking Receipt",
-        "",
-        f"Booking ID: {booking['booking_id']}",
-        f"Status: {booking['status']}",
-        f"Payment status: {booking.get('payment_status') or 'Pending'}",
-        f"Booked at: {booked_at.strftime('%Y-%m-%d %H:%M') if booked_at else '-'}",
-        "",
-        "User details",
-        f"Name: {booking.get('full_name') or '-'}",
-        f"Email: {booking.get('email') or '-'}",
-        f"Phone: {booking.get('phone') or '-'}",
-        "",
-        "Event details",
-        f"Event: {booking.get('event_name') or '-'}",
-        f"Date: {booking['event_date'].strftime('%Y-%m-%d') if booking.get('event_date') else '-'}",
-        f"Venue: {booking.get('venue_name') or '-'}",
-        f"Location: {booking.get('location') or '-'}",
-        f"Tickets: {booking.get('tickets') or 0}",
-        f"Amount paid: GBP {to_money(booking.get('amount')):.2f}",
-    ]
-    content = "\n".join(lines)
+    content = build_booking_receipt_pdf(booking)
+    receipt_reference = booking_receipt_reference(booking_id)
 
     return Response(
         content,
-        mimetype="text/plain",
+        mimetype="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=booking-{booking_id}-receipt.txt"
+            "Content-Disposition": f"attachment; filename={receipt_reference.lower()}-receipt.pdf"
         },
     )
 
@@ -1807,6 +3031,9 @@ def admin_dashboard():
     cursor.execute("SELECT COUNT(*) AS count FROM events")
     events_count = cursor.fetchone()["count"]
 
+    cursor.execute("SELECT COUNT(*) AS count FROM venues")
+    venues_count = cursor.fetchone()["count"]
+
     cursor.execute("SELECT COUNT(*) AS count FROM users")
     users_count = cursor.fetchone()["count"]
 
@@ -1829,6 +3056,9 @@ def admin_dashboard():
 
     messages_count = count_contact_messages(cursor)
     new_messages_count = count_contact_messages(cursor, status="New")
+    reviews_count = count_reviews(cursor)
+    pending_reviews_count = count_reviews(cursor, status=REVIEW_STATUS_PENDING)
+    approved_reviews_count = count_reviews(cursor, status=REVIEW_STATUS_APPROVED)
 
     cursor.execute(
         f"""
@@ -1848,6 +3078,7 @@ def admin_dashboard():
     recent_bookings = cursor.fetchall()
 
     recent_messages = fetch_contact_messages(cursor, limit=5)
+    recent_reviews = fetch_reviews(cursor, limit=5)
 
     cursor.close()
     conn.close()
@@ -1855,6 +3086,7 @@ def admin_dashboard():
     return render_template(
         "admin/dashboard.html",
         events_count=events_count,
+        venues_count=venues_count,
         users_count=users_count,
         bookings_count=bookings_count,
         tickets_total=tickets_total,
@@ -1863,7 +3095,203 @@ def admin_dashboard():
         messages_count=messages_count,
         new_messages_count=new_messages_count,
         recent_messages=recent_messages,
+        reviews_count=reviews_count,
+        pending_reviews_count=pending_reviews_count,
+        approved_reviews_count=approved_reviews_count,
+        recent_reviews=recent_reviews,
     )
+
+
+@app.route("/admin/venues")
+@admin_required
+def admin_venues():
+    q = request.args.get("q", "").strip()
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    venues = fetch_venue_overview(cursor, q=q)
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/venues.html",
+        venues=venues,
+        q=q,
+        total_venues=len(venues),
+    )
+
+
+@app.route("/admin/venues/add", methods=["GET", "POST"])
+@admin_required
+def add_venue():
+    venue = {}
+
+    if request.method == "POST":
+        venue_name = request.form.get("venue_name", "").strip()
+        address = request.form.get("address", "").strip()
+        city = request.form.get("city", "").strip()
+        capacity_raw = request.form.get("capacity", "").strip()
+
+        try:
+            capacity = int(capacity_raw)
+        except (TypeError, ValueError):
+            capacity = None
+
+        venue = {
+            "venue_name": venue_name,
+            "address": address,
+            "city": city,
+            "capacity": capacity,
+        }
+
+        if not venue_name:
+            flash("Please enter a venue name.", "error")
+        elif capacity is None or capacity < 1:
+            flash("Please enter a valid venue capacity.", "error")
+        else:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            try:
+                if venue_name_exists(cursor, venue_name):
+                    flash("A venue with that name already exists.", "error")
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO venues (venue_name, address, city, capacity)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (
+                            venue_name[:150],
+                            address[:255] or None,
+                            city[:100] or None,
+                            capacity,
+                        ),
+                    )
+                    conn.commit()
+                    flash("Venue added successfully.", "success")
+                    return redirect(url_for("admin_venues"))
+            except mysql.connector.Error as err:
+                conn.rollback()
+                flash(f"Database error: {err}", "error")
+            finally:
+                cursor.close()
+                conn.close()
+
+    return render_template(
+        "venue_form.html",
+        page_title="Add Venue",
+        submit_label="Add Venue",
+        action_url=url_for("add_venue"),
+        venue=venue,
+    )
+
+
+@app.route("/admin/venues/<int:venue_id>/edit", methods=["GET", "POST"])
+@admin_required
+def update_venue(venue_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    venue_rows = fetch_venue_overview(cursor, venue_id=venue_id, limit=1)
+
+    if not venue_rows:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    venue = venue_rows[0]
+
+    try:
+        if request.method == "POST":
+            venue_name = request.form.get("venue_name", "").strip()
+            address = request.form.get("address", "").strip()
+            city = request.form.get("city", "").strip()
+            capacity_raw = request.form.get("capacity", "").strip()
+
+            try:
+                capacity = int(capacity_raw)
+            except (TypeError, ValueError):
+                capacity = None
+
+            if not venue_name:
+                flash("Please enter a venue name.", "error")
+            elif capacity is None or capacity < 1:
+                flash("Please enter a valid venue capacity.", "error")
+            else:
+                try:
+                    if venue_name_exists(cursor, venue_name, exclude_venue_id=venue_id):
+                        flash("A venue with that name already exists.", "error")
+                    else:
+                        cursor.execute(
+                            """
+                            UPDATE venues
+                            SET venue_name=%s, address=%s, city=%s, capacity=%s
+                            WHERE venue_id=%s
+                            """,
+                            (
+                                venue_name[:150],
+                                address[:255] or None,
+                                city[:100] or None,
+                                capacity,
+                                venue_id,
+                            ),
+                        )
+                        conn.commit()
+                        flash("Venue updated successfully.", "success")
+                        return redirect(url_for("admin_venues"))
+                except mysql.connector.Error as err:
+                    conn.rollback()
+                    flash(f"Database error: {err}", "error")
+
+            venue.update(
+                {
+                    "venue_name": venue_name,
+                    "address": address,
+                    "city": city,
+                    "capacity": capacity,
+                }
+            )
+    finally:
+        cursor.close()
+        conn.close()
+
+    return render_template(
+        "venue_form.html",
+        page_title="Edit Venue",
+        submit_label="Update Venue",
+        action_url=url_for("update_venue", venue_id=venue_id),
+        venue=venue,
+    )
+
+
+@app.route("/admin/venues/<int:venue_id>/delete", methods=["GET", "POST"])
+@admin_required
+def delete_venue(venue_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    venue_rows = fetch_venue_overview(cursor, venue_id=venue_id, limit=1)
+
+    if not venue_rows:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    venue = venue_rows[0]
+
+    try:
+        if request.method == "POST":
+            try:
+                cursor.execute("DELETE FROM venues WHERE venue_id=%s", (venue_id,))
+                conn.commit()
+                flash("Venue deleted successfully.", "success")
+                return redirect(url_for("admin_venues"))
+            except mysql.connector.Error as err:
+                conn.rollback()
+                flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return render_template("venue_delete.html", venue=venue)
 
 
 @app.route("/admin/bookings")
@@ -1955,6 +3383,67 @@ def admin_bookings():
         status=status_raw,
         date_from=date_from_raw,
         date_to=date_to_raw,
+    )
+
+
+@app.route("/admin/receipts")
+@admin_required
+def admin_receipts():
+    q = request.args.get("q", "").strip()
+    page = parse_positive_int(request.args.get("page"), 1)
+    per_page = 10
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    total_receipts = count_booking_receipts(cursor, q=q)
+    total_pages = max(1, (total_receipts + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    offset = (page - 1) * per_page
+
+    receipts = fetch_booking_receipts(
+        cursor,
+        q=q,
+        limit=per_page,
+        offset=offset,
+    )
+    for receipt in receipts:
+        receipt["receipt_reference"] = booking_receipt_reference(receipt["booking_id"])
+
+    pagination_base_args = {}
+    if q:
+        pagination_base_args["q"] = q
+
+    pagination_links = []
+    for item in build_pagination_pages(page, total_pages):
+        if item is None:
+            pagination_links.append({"type": "ellipsis"})
+        else:
+            page_args = dict(pagination_base_args)
+            page_args["page"] = item
+            pagination_links.append(
+                {
+                    "type": "page",
+                    "page": item,
+                    "url": url_for("admin_receipts", **page_args),
+                }
+            )
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/receipts.html",
+        receipts=receipts,
+        q=q,
+        page=page,
+        total_pages=total_pages,
+        total_receipts=total_receipts,
+        start_item=((page - 1) * per_page + 1) if total_receipts else 0,
+        end_item=min(page * per_page, total_receipts) if total_receipts else 0,
+        pagination_links=pagination_links,
+        pagination_prev_url=url_for("admin_receipts", page=page - 1, **pagination_base_args) if page > 1 else None,
+        pagination_next_url=url_for("admin_receipts", page=page + 1, **pagination_base_args) if page < total_pages else None,
     )
 
 
@@ -2127,6 +3616,82 @@ def admin_users():
     return render_template("admin/users.html", users=users_rows, q=q)
 
 
+@app.route("/admin/reviews")
+@admin_required
+def admin_reviews():
+    q = request.args.get("q", "").strip()
+    status_raw = request.args.get("status", "").strip()
+    status_filter = ""
+
+    if status_raw:
+        if status_raw in REVIEW_STATUSES:
+            status_filter = status_raw
+        else:
+            flash("Invalid review status filter.", "error")
+
+    page = parse_positive_int(request.args.get("page"), 1)
+    per_page = 10
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    count_status = status_filter or None
+    total_reviews = count_reviews(cursor, q=q, status=count_status)
+    total_pages = max(1, (total_reviews + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    offset = (page - 1) * per_page
+
+    reviews = fetch_reviews(
+        cursor,
+        q=q,
+        status=count_status,
+        limit=per_page,
+        offset=offset,
+        order_by="r.created_at DESC, r.review_id DESC",
+    )
+
+    pagination_base_args = {}
+    if q:
+        pagination_base_args["q"] = q
+    if status_filter:
+        pagination_base_args["status"] = status_filter
+
+    pagination_links = []
+    for item in build_pagination_pages(page, total_pages):
+        if item is None:
+            pagination_links.append({"type": "ellipsis"})
+        else:
+            page_args = dict(pagination_base_args)
+            page_args["page"] = item
+            pagination_links.append(
+                {
+                    "type": "page",
+                    "page": item,
+                    "url": url_for("admin_reviews", **page_args),
+                }
+            )
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/reviews.html",
+        reviews=reviews,
+        q=q,
+        status=status_filter,
+        statuses=REVIEW_STATUSES,
+        page=page,
+        total_pages=total_pages,
+        total_reviews=total_reviews,
+        start_item=((page - 1) * per_page + 1) if total_reviews else 0,
+        end_item=min(page * per_page, total_reviews) if total_reviews else 0,
+        pagination_links=pagination_links,
+        pagination_prev_url=url_for("admin_reviews", page=page - 1, **pagination_base_args) if page > 1 else None,
+        pagination_next_url=url_for("admin_reviews", page=page + 1, **pagination_base_args) if page < total_pages else None,
+    )
+
+
+
 @app.route("/admin/contact-messages")
 @admin_required
 def admin_contact_messages():
@@ -2250,10 +3815,128 @@ def admin_delete_contact_message(message_id):
     return redirect(next_url)
 
 
+@app.route("/admin/reviews/<int:review_id>/approve", methods=["POST"])
+@admin_required
+def admin_approve_review(review_id):
+    next_url = get_safe_next_url() or url_for("admin_reviews")
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    review_rows = fetch_reviews(cursor, review_id=review_id, limit=1)
+
+    if not review_rows:
+        cursor.close()
+        conn.close()
+        flash("Review not found.", "error")
+        return redirect(next_url)
+
+    try:
+        now = current_datetime()
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET status=%s,
+                reviewed_by=%s,
+                reviewed_at=%s,
+                updated_at=%s
+            WHERE review_id=%s
+            """,
+            (
+                REVIEW_STATUS_APPROVED,
+                g.current_user["user_id"],
+                now,
+                now,
+                review_id,
+            ),
+        )
+        conn.commit()
+        flash("Review approved and added to the public review list.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(next_url)
+
+
+@app.route("/admin/reviews/<int:review_id>/reject", methods=["POST"])
+@admin_required
+def admin_reject_review(review_id):
+    next_url = get_safe_next_url() or url_for("admin_reviews")
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    review_rows = fetch_reviews(cursor, review_id=review_id, limit=1)
+
+    if not review_rows:
+        cursor.close()
+        conn.close()
+        flash("Review not found.", "error")
+        return redirect(next_url)
+
+    try:
+        now = current_datetime()
+        cursor.execute(
+            """
+            UPDATE reviews
+            SET status=%s,
+                reviewed_by=%s,
+                reviewed_at=%s,
+                updated_at=%s
+            WHERE review_id=%s
+            """,
+            (
+                REVIEW_STATUS_REJECTED,
+                g.current_user["user_id"],
+                now,
+                now,
+                review_id,
+            ),
+        )
+        conn.commit()
+        flash("Review rejected.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(next_url)
+
+
+@app.route("/admin/reviews/<int:review_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_review(review_id):
+    next_url = get_safe_next_url() or url_for("admin_reviews")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM reviews WHERE review_id = %s", (review_id,))
+        if cursor.rowcount == 0:
+            flash("Review not found.", "error")
+        else:
+            conn.commit()
+            flash("Review deleted.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+    return redirect(next_url)
+
+
 @app.route("/contact", methods=["GET", "POST"])
-@login_required
 def contact():
     if request.method == "POST":
+        if not g.current_user:
+            flash("Please log in to send a message.", "error")
+            return redirect(url_for("login", next=url_for("contact")))
+
         subject = request.form.get("subject", "").strip()
         message = request.form.get("message", "").strip()
         sender_name = (g.current_user.get("full_name") or "").strip()
