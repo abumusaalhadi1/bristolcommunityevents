@@ -1,9 +1,14 @@
+"""Flask application for Bristol Community Events.
+
+The project stays in one file for coursework convenience, but the code is
+grouped into clear sections: constants, helpers, database setup, route
+handlers, and error pages.
+"""
+
 from datetime import datetime
-import io
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 import re
-import textwrap
 
 import mysql.connector
 from flask import (
@@ -27,10 +32,13 @@ from config import (
     SECRET_KEY,
 )
 from dbfunc import get_db_connection
+from receipt import booking_receipt_reference, build_booking_receipt_pdf as _build_booking_receipt_pdf
+from seed_data import DEFAULT_REVIEWS, DEFAULT_VENUES
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
+# Core app constants and seed data are kept together for easier navigation.
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 ROLE_ADMIN = "admin"
@@ -49,99 +57,10 @@ REVIEW_STATUSES = (
     REVIEW_STATUS_REJECTED,
 )
 
-DEFAULT_REVIEWS = [
-    {
-        "seed_key": "demo-john-smith",
-        "author_name": "John Smith",
-        "author_initials": "JS",
-        "rating": 5,
-        "content": "The event listings are easy to browse and the booking flow is quick. I found a great local concert in minutes.",
-        "status": REVIEW_STATUS_APPROVED,
-    },
-    {
-        "seed_key": "demo-emily-carter",
-        "author_name": "Emily Carter",
-        "author_initials": "EC",
-        "rating": 4,
-        "content": "Really solid experience overall. I liked how clearly the venues and dates were laid out, and checkout was straightforward.",
-        "status": REVIEW_STATUS_APPROVED,
-    },
-    {
-        "seed_key": "demo-david-brown",
-        "author_name": "David Brown",
-        "author_initials": "DB",
-        "rating": 5,
-        "content": "The student discounts made a big difference and the site made it simple to find something affordable.",
-        "status": REVIEW_STATUS_APPROVED,
-    },
-    {
-        "seed_key": "demo-aisha-rahman",
-        "author_name": "Aisha Rahman",
-        "author_initials": "AR",
-        "rating": 4,
-        "content": "Great mix of community events and live entertainment. The filters helped me find the right event fast.",
-        "status": REVIEW_STATUS_APPROVED,
-    },
-    {
-        "seed_key": "demo-sofia-patel",
-        "author_name": "Sofia Patel",
-        "author_initials": "SP",
-        "rating": 5,
-        "content": "I appreciated the clean layout and accurate event details. It felt easy to plan ahead.",
-        "status": REVIEW_STATUS_APPROVED,
-    },
-    {
-        "seed_key": "demo-daniel-green",
-        "author_name": "Daniel Green",
-        "author_initials": "DG",
-        "rating": 4,
-        "content": "Smooth booking and useful event info. I'd definitely use it again for local Bristol plans.",
-        "status": REVIEW_STATUS_APPROVED,
-    },
-]
-
-DEFAULT_VENUES = [
-    {
-        "venue_name": "Bristol City Centre Hall",
-        "address": "Broad Street",
-        "city": "Bristol",
-        "capacity": 500,
-    },
-    {
-        "venue_name": "Harbourside Gallery",
-        "address": "Dock Road",
-        "city": "Bristol",
-        "capacity": 300,
-    },
-    {
-        "venue_name": "Ashton Court Estate",
-        "address": "Ashton Court",
-        "city": "Bristol",
-        "capacity": 400,
-    },
-    {
-        "venue_name": "Bristol Indoor Arena",
-        "address": "Arena Road",
-        "city": "Bristol",
-        "capacity": 500,
-    },
-    {
-        "venue_name": "Harbourside Art Space",
-        "address": "Dock Street",
-        "city": "Bristol",
-        "capacity": 300,
-    },
-    {
-        "venue_name": "UWE Exhibition Hall",
-        "address": "Frenchay Campus",
-        "city": "Bristol",
-        "capacity": 400,
-    },
-]
-
 _db_initialized = False
 
 
+# Input parsing and validation helpers.
 def parse_ticket_count(value):
     try:
         tickets = int(value)
@@ -305,6 +224,7 @@ def lookup_user_id_by_name(cursor, full_name: str):
 
 
 def seed_default_reviews(cursor):
+    """Seed demo reviews when the reviews table is empty."""
     cursor.execute(
         """
         SELECT seed_key
@@ -342,7 +262,7 @@ def seed_default_reviews(cursor):
                 None,
                 now,
             ),
-        )
+    )
 
 
 def fetch_reviews(
@@ -609,6 +529,7 @@ def add_column_if_missing(cursor, table_name: str, column_name: str, definition:
         cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
+# Database schema helpers.
 def rename_column_if_needed(cursor, table_name: str, old_name: str, new_name: str, definition: str):
     if column_exists(cursor, table_name, old_name) and not column_exists(cursor, table_name, new_name):
         cursor.execute(
@@ -631,6 +552,7 @@ def create_venues_table(cursor):
 
 
 def seed_default_venues(cursor):
+    """Seed demo venues when the venues table is empty."""
     cursor.execute("SELECT COUNT(*) AS count FROM venues")
     venue_count = cursor.fetchone()["count"] or 0
     if venue_count > 0:
@@ -1037,7 +959,7 @@ def seed_default_newsletter_subscribers(cursor):
 
     cursor.execute(
         """
-        SELECT LOWER(TRIM(email)) AS email
+        SELECT LOWER(TRIM(email)) AS email, MIN(created_at) AS created_at
         FROM users
         WHERE email IS NOT NULL AND TRIM(email) <> ''
         GROUP BY LOWER(TRIM(email))
@@ -1045,22 +967,29 @@ def seed_default_newsletter_subscribers(cursor):
         LIMIT 5
         """
     )
-    seed_emails = [row["email"] for row in cursor.fetchall() if row.get("email")]
-    if not seed_emails and DEFAULT_ADMIN_EMAIL:
-        seed_emails = [DEFAULT_ADMIN_EMAIL.lower()]
+    seed_rows = [
+        {
+            "email": row["email"],
+            "created_at": row["created_at"] or current_datetime(),
+        }
+        for row in cursor.fetchall()
+        if row.get("email")
+    ]
+    if not seed_rows and DEFAULT_ADMIN_EMAIL:
+        seed_rows = [{"email": DEFAULT_ADMIN_EMAIL.lower(), "created_at": current_datetime()}]
 
-    now = current_datetime()
-    for email in seed_emails:
+    for row in seed_rows:
         cursor.execute(
             """
             INSERT IGNORE INTO newsletter_subscribers (email, created_at)
             VALUES (%s, %s)
             """,
-            (email, now),
+            (row["email"], row["created_at"]),
         )
 
 
 def initialize_database():
+    """Apply lightweight migrations and seed demo data once per process."""
     global _db_initialized
     if _db_initialized:
         return
@@ -1174,6 +1103,7 @@ def bootstrap_default_admin(cursor):
 
 
 def load_current_user():
+    """Load the signed-in user into Flask's request context."""
     user_id = session.get("user_id")
     if not user_id:
         g.current_user = None
@@ -1477,260 +1407,10 @@ def payment_status_for_booking(status: str) -> str:
     return "Paid"
 
 
-def booking_receipt_reference(booking_id: int) -> str:
-    return f"BCE-{int(booking_id):06d}"
-
-
-def format_receipt_date(value) -> str:
-    if not value:
-        return "-"
-    if hasattr(value, "strftime"):
-        return value.strftime("%B %d, %Y")
-    text = str(value).strip()
-    return text or "-"
-
-
-def format_receipt_datetime(value) -> str:
-    if not value:
-        return "-"
-    if hasattr(value, "strftime"):
-        return value.strftime("%B %d, %Y %H:%M")
-    text = str(value).strip()
-    return text or "-"
-
-
-def normalize_receipt_text(value) -> str:
-    if value is None:
-        return "-"
-    if isinstance(value, Decimal):
-        value = f"{value:.2f}"
-    elif hasattr(value, "strftime"):
-        value = format_receipt_datetime(value)
-    else:
-        value = str(value)
-    text = value.strip()
-    return text or "-"
-
-
-def pdf_escape_text(value) -> str:
-    text = normalize_receipt_text(value).encode("latin-1", "replace").decode("latin-1")
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-def pdf_approx_text_width(text, size: float) -> float:
-    return len(normalize_receipt_text(text)) * size * 0.52
-
-
-def pdf_wrap_text(text, max_chars: int):
-    paragraphs = normalize_receipt_text(text).splitlines()
-    wrapped = []
-    for paragraph in paragraphs:
-        if not paragraph:
-            wrapped.append("")
-            continue
-        wrapped.extend(
-            textwrap.wrap(
-                paragraph,
-                width=max_chars,
-                break_long_words=True,
-                break_on_hyphens=False,
-            )
-            or [""]
-        )
-    return wrapped or [""]
-
-
-def pdf_add_text(ops, x, y, text, *, size=11, bold=False):
-    font = "/F2" if bold else "/F1"
-    ops.append(f"BT {font} {size} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm ({pdf_escape_text(text)}) Tj ET")
-
-
-def pdf_add_line(ops, x1, y1, x2, y2, *, width=0.8, gray=0.82):
-    ops.append(f"{gray:.3f} G")
-    ops.append(f"{width:.2f} w")
-    ops.append(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
-
-
-def pdf_add_paragraph(ops, x, y, text, *, size=11, leading=14, max_chars=84, bold=False):
-    for line in pdf_wrap_text(text, max_chars):
-        pdf_add_text(ops, x, y, line, size=size, bold=bold)
-        y -= leading
-    return y
-
 
 def build_booking_receipt_pdf(booking):
-    booking_id = int(booking["booking_id"])
-    receipt_reference = booking_receipt_reference(booking_id)
-    page_width = 612.0
-    page_height = 792.0
-    margin = 54.0
-    header_height = 108.0
-    body_top = page_height - header_height - 28.0
-    body_width_chars = max(50, int((page_width - (2 * margin)) / (11 * 0.52)))
-    ops = []
-
-    # Branded banner
-    ops.append("0.10 0.32 0.47 rg")
-    ops.append(f"0 {page_height - header_height:.2f} {page_width:.2f} {header_height:.2f} re f")
-    ops.append("1 1 1 rg")
-    pdf_add_text(ops, margin, page_height - 38, "Bristol", size=20, bold=True)
-    ops.append("0.953 0.612 0.071 rg")
-    pdf_add_text(
-        ops,
-        margin + pdf_approx_text_width("Bristol ", 20),
-        page_height - 38,
-        "Community Events",
-        size=20,
-        bold=True,
-    )
-    ops.append("1 1 1 rg")
-    pdf_add_text(ops, margin, page_height - 62, "Booking Receipt", size=12, bold=False)
-    pdf_add_text(ops, margin, page_height - 78, "Official confirmation and payment record", size=9, bold=False)
-
-    receipt_text = f"Receipt No. {receipt_reference}"
-    booked_text = f"Booked {format_receipt_datetime(booking.get('booked_at') or booking.get('created_at'))}"
-    receipt_x = max(margin, page_width - margin - pdf_approx_text_width(receipt_text, 11))
-    booked_x = max(margin, page_width - margin - pdf_approx_text_width(booked_text, 10))
-    pdf_add_text(ops, receipt_x, page_height - 38, receipt_text, size=11, bold=True)
-    pdf_add_text(ops, booked_x, page_height - 60, booked_text, size=10, bold=False)
-    ops.append("0 0 0 rg")
-
-    y = body_top
-    y = pdf_add_paragraph(
-        ops,
-        margin,
-        y,
-        f"Official confirmation for booking #{booking_id}",
-        size=12,
-        leading=15,
-        max_chars=body_width_chars,
-        bold=True,
-    )
-    y = pdf_add_paragraph(
-        ops,
-        margin,
-        y - 2,
-        f"Reference: {receipt_reference}",
-        size=10,
-        leading=13,
-        max_chars=body_width_chars,
-    )
-    y -= 6
-    pdf_add_line(ops, margin, y, page_width - margin, y, width=0.9, gray=0.78)
-    y -= 18
-
-    def add_section(title):
-        nonlocal y
-        ops.append("0.10 0.32 0.47 rg")
-        y = pdf_add_paragraph(
-            ops,
-            margin,
-            y,
-            title,
-            size=13,
-            leading=16,
-            max_chars=body_width_chars,
-            bold=True,
-        )
-        ops.append("0 0 0 rg")
-        y -= 4
-        pdf_add_line(ops, margin, y, page_width - margin, y, width=0.6, gray=0.88)
-        y -= 16
-
-    def add_field(label, value):
-        nonlocal y
-        y = pdf_add_paragraph(
-            ops,
-            margin,
-            y,
-            f"{label}: {normalize_receipt_text(value)}",
-            size=11,
-            leading=14,
-            max_chars=body_width_chars,
-        )
-        y -= 2
-
-    add_section("Booking Summary")
-    add_field("Booking ID", booking_id)
-    add_field("Receipt Reference", receipt_reference)
-    add_field("Status", booking.get("status") or "Confirmed")
-    add_field("Payment Status", booking.get("payment_status") or "Pending")
-    add_field("Booked At", format_receipt_datetime(booking.get("booked_at") or booking.get("created_at")))
-    add_field("Tickets", booking.get("tickets") or 0)
-    add_field("Payment Method", (booking.get("payment_method") or "card").title())
-    add_field("Total Paid", f"£{to_money(booking.get('amount')):.2f}")
-
-    y -= 8
-    add_section("Attendee Details")
-    add_field("Name", booking.get("full_name"))
-    add_field("Email", booking.get("email"))
-    add_field("Phone", booking.get("phone") or "-")
-    add_field("Role", (booking.get("role") or "user").title())
-
-    y -= 8
-    add_section("Event Details")
-    add_field("Event", booking.get("event_name"))
-    add_field("Date", format_receipt_date(booking.get("event_date")))
-    add_field("Venue", booking.get("venue_name") or "-")
-    add_field("Location", booking.get("location") or booking.get("address") or "-")
-    add_field("Category", booking.get("category_name") or "-")
-
-    y -= 8
-    pdf_add_line(ops, margin, y, page_width - margin, y, width=0.7, gray=0.82)
-    y -= 18
-    ops.append("0.10 0.32 0.47 rg")
-    y = pdf_add_paragraph(
-        ops,
-        margin,
-        y,
-        "Thank you for booking with Bristol Community Events.",
-        size=11,
-        leading=14,
-        max_chars=body_width_chars,
-        bold=True,
-    )
-    ops.append("0 0 0 rg")
-    y = pdf_add_paragraph(
-        ops,
-        margin,
-        y - 2,
-        "Please keep this receipt for your records. For help, contact us at 42 Queen Square, Bristol BS1 4QR or +44 (0) 117 123 4567.",
-        size=10,
-        leading=13,
-        max_chars=body_width_chars,
-    )
-
-    content_stream = "\n".join(ops).encode("latin-1", "replace")
-    objects = [
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-        b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
-        f"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 {page_width:.0f} {page_height:.0f}] "
-        f"/Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>".encode("ascii"),
-        b"<< /Length " + str(len(content_stream)).encode("ascii") + b" >>\nstream\n" + content_stream + b"\nendstream",
-        b"<< /Type /Catalog /Pages 3 0 R >>",
-    ]
-
-    pdf = io.BytesIO()
-    pdf.write(b"%PDF-1.4\n")
-    offsets = []
-    for obj_number, body in enumerate(objects, start=1):
-        offsets.append(pdf.tell())
-        pdf.write(f"{obj_number} 0 obj\n".encode("ascii"))
-        pdf.write(body)
-        pdf.write(b"\nendobj\n")
-
-    xref_start = pdf.tell()
-    pdf.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
-    pdf.write(b"0000000000 65535 f \n")
-    for offset in offsets:
-        pdf.write(f"{offset:010d} 00000 n \n".encode("ascii"))
-    pdf.write(
-        f"trailer\n<< /Size {len(objects) + 1} /Root 6 0 R >>\nstartxref\n{xref_start}\n%%EOF".encode(
-            "ascii"
-        )
-    )
-    return pdf.getvalue()
+    """Delegate PDF rendering to the receipt helper module."""
+    return _build_booking_receipt_pdf(booking)
 
 
 def default_login_redirect():
@@ -1739,7 +1419,6 @@ def default_login_redirect():
     return url_for("home")
 
 
-@app.route("/view")
 def view_events():
     return redirect(url_for("events"))
 
@@ -2013,7 +1692,6 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
         return redirect(invalid_redirect)
 
 
-@app.route("/admin/events")
 @admin_required
 def admin_events():
     q = request.args.get("q", "").strip()
@@ -2099,7 +1777,6 @@ def admin_events():
     )
 
 
-@app.route("/add", methods=["GET", "POST"])
 @admin_required
 def add_event():
     event = {}
@@ -2209,7 +1886,6 @@ def add_event():
     )
 
 
-@app.route("/update/<int:event_id>", methods=["GET", "POST"])
 @admin_required
 def update_event(event_id):
     conn = get_db_connection()
@@ -2327,7 +2003,6 @@ def update_event(event_id):
     )
 
 
-@app.route("/delete/<int:event_id>", methods=["GET", "POST"])
 @admin_required
 def delete_event(event_id):
     conn = get_db_connection()
@@ -2377,7 +2052,6 @@ def delete_event(event_id):
     return render_template("event_delete.html", event=event)
 
 
-@app.route("/")
 def home():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -2462,7 +2136,6 @@ def home():
     )
 
 
-@app.route("/subscribe", methods=["POST"])
 def subscribe():
     email = request.form.get("email", "").strip().lower()
     next_url = url_for("home") + "#newsletter"
@@ -2512,7 +2185,6 @@ def subscribe():
     return redirect(next_url)
 
 
-@app.route("/reviews", methods=["GET", "POST"])
 def submit_review():
     if request.method == "GET":
         return redirect(url_for("home"))
@@ -2581,7 +2253,6 @@ def submit_review():
     return redirect(url_for("account"))
 
 
-@app.route("/events")
 def events():
     category = request.args.get("category", "").strip()
     q = request.args.get("q", "").strip()
@@ -2660,7 +2331,6 @@ def events():
     )
 
 
-@app.route("/venues")
 def venues_page():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -2675,7 +2345,6 @@ def venues_page():
     )
 
 
-@app.route("/venues/<int:venue_id>")
 def venue_detail(venue_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -2693,7 +2362,6 @@ def venue_detail(venue_id):
     )
 
 
-@app.route("/book-tickets", methods=["GET", "POST"])
 @login_required
 def book_tickets():
     if request.method == "POST":
@@ -2734,7 +2402,6 @@ def book_tickets():
     )
 
 
-@app.route("/event/<int:event_id>")
 def event_detail(event_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -2748,7 +2415,6 @@ def event_detail(event_id):
     return render_template("event_details.html", event=event)
 
 
-@app.route("/book/<int:event_id>", methods=["GET", "POST"])
 @login_required
 def book(event_id):
     conn = get_db_connection()
@@ -2783,13 +2449,11 @@ def book(event_id):
     )
 
 
-@app.route("/bookings")
 @login_required
 def bookings_list():
     return redirect(url_for("my_bookings"))
 
 
-@app.route("/my-bookings")
 @login_required
 def my_bookings():
     conn = get_db_connection()
@@ -2819,7 +2483,6 @@ def my_bookings():
     return render_template("my_bookings.html", bookings=bookings)
 
 
-@app.route("/account", methods=["GET", "POST"])
 @login_required
 def account():
     conn = get_db_connection()
@@ -2922,7 +2585,6 @@ def account():
     )
 
 
-@app.route("/account/contact-messages/<int:message_id>/delete", methods=["POST"])
 @login_required
 def account_delete_contact_message(message_id):
     conn = get_db_connection()
@@ -2956,7 +2618,6 @@ def account_delete_contact_message(message_id):
     return redirect(url_for("account"))
 
 
-@app.route("/account/reviews/<int:review_id>/edit", methods=["GET", "POST"])
 @login_required
 def account_edit_review(review_id):
     conn = get_db_connection()
@@ -3035,7 +2696,6 @@ def account_edit_review(review_id):
     return render_template("review_form.html", review=review, next_url=url_for("account"))
 
 
-@app.route("/account/reviews/<int:review_id>/delete", methods=["POST"])
 @login_required
 def account_delete_review(review_id):
     conn = get_db_connection()
@@ -3061,7 +2721,6 @@ def account_delete_review(review_id):
     return redirect(url_for("account"))
 
 
-@app.route("/bookings/<int:booking_id>/receipt")
 @login_required
 def booking_receipt(booking_id):
     conn = get_db_connection()
@@ -3082,7 +2741,6 @@ def booking_receipt(booking_id):
     )
 
 
-@app.route("/bookings/<int:booking_id>/receipt/download")
 @login_required
 def download_booking_receipt(booking_id):
     conn = get_db_connection()
@@ -3108,7 +2766,6 @@ def download_booking_receipt(booking_id):
     )
 
 
-@app.route("/bookings/<int:booking_id>/cancel", methods=["POST"])
 @login_required
 def cancel_booking(booking_id):
     conn = get_db_connection()
@@ -3157,18 +2814,15 @@ def cancel_booking(booking_id):
     return redirect(url_for("my_bookings"))
 
 
-@app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     next_url = get_safe_next_url() or url_for("admin_dashboard")
     return redirect(url_for("login", next=next_url))
 
 
-@app.route("/admin/logout")
 def admin_logout():
     return redirect(url_for("logout"))
 
 
-@app.route("/admin")
 @admin_required
 def admin_dashboard():
     conn = get_db_connection()
@@ -3249,13 +2903,11 @@ def admin_dashboard():
     )
 
 
-@app.route("/admin/subscribers")
 @admin_required
 def admin_subscribers():
     return render_template("admin/subscribers.html")
 
 
-@app.route("/admin/venues")
 @admin_required
 def admin_venues():
     q = request.args.get("q", "").strip()
@@ -3274,7 +2926,6 @@ def admin_venues():
     )
 
 
-@app.route("/admin/venues/add", methods=["GET", "POST"])
 @admin_required
 def add_venue():
     venue = {}
@@ -3339,7 +2990,6 @@ def add_venue():
     )
 
 
-@app.route("/admin/venues/<int:venue_id>/edit", methods=["GET", "POST"])
 @admin_required
 def update_venue(venue_id):
     conn = get_db_connection()
@@ -3416,7 +3066,6 @@ def update_venue(venue_id):
     )
 
 
-@app.route("/admin/venues/<int:venue_id>/delete", methods=["GET", "POST"])
 @admin_required
 def delete_venue(venue_id):
     conn = get_db_connection()
@@ -3447,7 +3096,6 @@ def delete_venue(venue_id):
     return render_template("venue_delete.html", venue=venue)
 
 
-@app.route("/admin/bookings")
 @admin_required
 def admin_bookings():
     q = request.args.get("q", "").strip()
@@ -3539,7 +3187,6 @@ def admin_bookings():
     )
 
 
-@app.route("/admin/receipts")
 @admin_required
 def admin_receipts():
     q = request.args.get("q", "").strip()
@@ -3600,7 +3247,6 @@ def admin_receipts():
     )
 
 
-@app.route("/admin/bookings/<int:booking_id>/edit", methods=["GET", "POST"])
 @admin_required
 def admin_edit_booking(booking_id):
     conn = get_db_connection()
@@ -3712,7 +3358,6 @@ def admin_edit_booking(booking_id):
     )
 
 
-@app.route("/admin/bookings/<int:booking_id>/delete", methods=["POST"])
 @admin_required
 def admin_delete_booking(booking_id):
     conn = get_db_connection()
@@ -3731,7 +3376,6 @@ def admin_delete_booking(booking_id):
     return redirect(url_for("admin_bookings"))
 
 
-@app.route("/admin/users")
 @admin_required
 def admin_users():
     q = request.args.get("q", "").strip()
@@ -3769,7 +3413,6 @@ def admin_users():
     return render_template("admin/users.html", users=users_rows, q=q)
 
 
-@app.route("/admin/reviews")
 @admin_required
 def admin_reviews():
     q = request.args.get("q", "").strip()
@@ -3845,7 +3488,6 @@ def admin_reviews():
 
 
 
-@app.route("/admin/contact-messages")
 @admin_required
 def admin_contact_messages():
     q = request.args.get("q", "").strip()
@@ -3875,7 +3517,6 @@ def admin_contact_messages():
     )
 
 
-@app.route("/admin/contact-messages/<int:message_id>/reply", methods=["GET", "POST"])
 @admin_required
 def admin_reply_contact_message(message_id):
     next_url = get_safe_next_url() or url_for("admin_contact_messages")
@@ -3948,7 +3589,6 @@ def admin_reply_contact_message(message_id):
     )
 
 
-@app.route("/admin/contact-messages/<int:message_id>/delete", methods=["POST"])
 @admin_required
 def admin_delete_contact_message(message_id):
     next_url = get_safe_next_url() or url_for("admin_contact_messages")
@@ -3968,7 +3608,6 @@ def admin_delete_contact_message(message_id):
     return redirect(next_url)
 
 
-@app.route("/admin/reviews/<int:review_id>/approve", methods=["POST"])
 @admin_required
 def admin_approve_review(review_id):
     next_url = get_safe_next_url() or url_for("admin_reviews")
@@ -4014,7 +3653,6 @@ def admin_approve_review(review_id):
     return redirect(next_url)
 
 
-@app.route("/admin/reviews/<int:review_id>/reject", methods=["POST"])
 @admin_required
 def admin_reject_review(review_id):
     next_url = get_safe_next_url() or url_for("admin_reviews")
@@ -4060,7 +3698,6 @@ def admin_reject_review(review_id):
     return redirect(next_url)
 
 
-@app.route("/admin/reviews/<int:review_id>/delete", methods=["POST"])
 @admin_required
 def admin_delete_review(review_id):
     next_url = get_safe_next_url() or url_for("admin_reviews")
@@ -4083,7 +3720,6 @@ def admin_delete_review(review_id):
     return redirect(next_url)
 
 
-@app.route("/contact", methods=["GET", "POST"])
 def contact():
     if request.method == "POST":
         if not g.current_user:
@@ -4167,7 +3803,6 @@ def contact():
     return render_template("contact.html", form_subject="", form_message="")
 
 
-@app.route("/login", methods=["GET", "POST"])
 def login():
     if g.current_user:
         next_url = get_safe_next_url()
@@ -4221,7 +3856,6 @@ def login():
     return render_template("login.html", next=next_url)
 
 
-@app.route("/register", methods=["GET", "POST"])
 def register():
     if g.current_user:
         return redirect(default_login_redirect())
@@ -4306,7 +3940,6 @@ def register():
     return render_template("register.html")
 
 
-@app.route("/logout")
 def logout():
     if session.get("user_id"):
         session.clear()
@@ -4314,7 +3947,6 @@ def logout():
     return redirect(url_for("home"))
 
 
-@app.route("/edit_booking/<int:booking_id>", methods=["GET", "POST"])
 @login_required
 def edit_booking(booking_id):
     if g.current_user.get("role") != ROLE_ADMIN:
@@ -4322,7 +3954,6 @@ def edit_booking(booking_id):
     return admin_edit_booking(booking_id)
 
 
-@app.route("/delete_booking/<int:booking_id>", methods=["POST"])
 @login_required
 def delete_booking(booking_id):
     if g.current_user.get("role") == ROLE_ADMIN:
@@ -4330,24 +3961,31 @@ def delete_booking(booking_id):
     return cancel_booking(booking_id)
 
 
-@app.errorhandler(403)
 def forbidden(_e):
     return render_template("403.html"), 403
 
 
-@app.errorhandler(404)
 def page_not_found(_e):
     return render_template("404.html"), 404
 
 
-@app.errorhandler(401)
 def unauthorized(_e):
     return render_template("401.html"), 401
 
 
-@app.errorhandler(500)
 def internal_error(_e):
     return render_template("500.html"), 500
+
+
+# Route registration lives in blueprint modules to keep the view code grouped by area.
+from blueprints.public import bp as public_bp
+from blueprints.account import bp as account_bp
+from blueprints.auth import bp as auth_bp
+from blueprints.admin import bp as admin_bp
+from blueprints.errors import bp as errors_bp
+
+for blueprint in (public_bp, account_bp, auth_bp, admin_bp, errors_bp):
+    app.register_blueprint(blueprint)
 
 
 if __name__ == "__main__":

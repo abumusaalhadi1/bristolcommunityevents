@@ -11,16 +11,32 @@
     <div class="label">Saved Emails</div>
     <div class="value">{{ newsletter_subscriber_count }}</div>
     <div style="margin-top: 0.35rem; color: #5d6b7b; font-weight: 600;">
-        Subscriber emails are shown in the sidebar on the left, and new signups are stored in the database automatically.
+        New subscriber sign-ups are saved automatically and listed below.
     </div>
 </div>
 
 <div class="admin-card" style="margin-top: 1rem;">
-    <div class="label">Latest Signup</div>
+    <div class="label">All Subscriber Emails</div>
     {% if newsletter_subscribers %}
-        <div class="value" style="font-size: 1.15rem; word-break: break-word;">{{ newsletter_subscribers[0].email }}</div>
-        <div style="margin-top: 0.35rem; color: #5d6b7b; font-weight: 600;">
-            Joined {{ newsletter_subscribers[0].created_at.strftime('%B %d, %Y %H:%M') if newsletter_subscribers[0].created_at else '-' }}
+        <div class="admin-table-wrap" style="margin-top: 0.85rem;">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Joined</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for subscriber in newsletter_subscribers %}
+                        <tr>
+                            <td style="word-break: break-word;">{{ subscriber.email }}</td>
+                            <td>
+                                {{ subscriber.created_at.strftime('%B %d, %Y %H:%M') if subscriber.created_at else '-' }}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     {% else %}
         <div style="margin-top: 0.35rem; color: #5d6b7b; font-weight: 600;">No subscribers yet.</div>

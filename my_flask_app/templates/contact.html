@@ -61,11 +61,11 @@
                     <h2>Send Us a Message</h2>
                     {% if is_authenticated %}
                         <p style="margin-bottom: 1rem; color: #52606d;">
-                            Messages are linked to your signed-in account and replies will appear on your profile.
+                            Messages are linked to your account, and replies will appear in your profile.
                         </p>
                     {% else %}
                         <p style="margin-bottom: 1rem; color: #52606d;">
-                            Log in to submit a message. Once you're signed in, your details will be attached automatically and replies will appear in your account.
+                            Log in to send a message. Once you're signed in, your details will be filled in automatically and replies will appear in your account.
                         </p>
                     {% endif %}
                     <form method="POST" action="{{ url_for('contact') }}">
@@ -101,7 +101,6 @@
                 </div>
             </div>
 
-            <!-- Map Section -->
             <section>
                 <h2>Our Location</h2>
                 <div class="map-container">

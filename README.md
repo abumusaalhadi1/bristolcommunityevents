@@ -1,44 +1,45 @@
 # Bristol Community Events (Flask)
 
-## Project Overview
-A Flask + MySQL web app for browsing Bristol community events, booking tickets, and managing bookings. The UI is fully integrated with Jinja templates while preserving the original styling.
+A Flask and MySQL web app for browsing Bristol events, booking tickets, sending contact messages, and managing admin tasks.
 
-## Technologies Used
-- Python (Flask)
-- MySQL (mysql-connector-python)
-- HTML, CSS, JavaScript (custom UI)
+## Project Layout
+- `my_flask_app/app.py` - main Flask app, routes, auth, and database setup
+- `my_flask_app/dbfunc.py` - database connection helper
+- `my_flask_app/config.py` - environment-based configuration
+- `my_flask_app/receipt.py` - booking receipt PDF helpers
+- `my_flask_app/seed_data.py` - sample venues and reviews
+- `my_flask_app/blueprints/` - route registration grouped by feature area
+- `my_flask_app/templates/` - Jinja templates
+- `my_flask_app/static/css/style.css` - site styling
+- `my_flask_app/static/js/app.js` - client-side booking logic
+- `my_flask_app/db_schema.sql` - schema for a fresh database
 
 ## Features
-- Home page with live stats, featured events, and testimonials
-- Events listing with filters (category/date/price)
-- Event detail pages with booking CTA
-- Booking flow with student discount and payment record
-- Bookings list with edit + delete actions
-- Login/Register (demo logic)
-- Custom 404/500 pages
+- Home page with featured events, stats, and reviews
+- Event browsing with category, date, and price filters
+- Event detail pages with ticket booking
+- Booking flow with student discount and PDF receipt
+- Contact form and account pages for signed-in users
+- Admin pages for events, venues, bookings, reviews, receipts, users, and subscribers
+- Blueprint-based route registration for public, account, auth, admin, and error handling
+- Custom error pages
 
-## Database Schema (Core Tables)
-- `events`
-- `venues`
-- `categories`
-- `users`
-- `bookings`
-- `payments`
-
-## How To Run
-1. Create the database:
-   - `uwe_events_db`
-2. Create tables using your SQL schema (events/venues/categories/users/bookings/payments).
+## Run It
+1. Create the database used in `my_flask_app/config.py` (default: `bristol_community_events_db`).
+2. Import `my_flask_app/db_schema.sql` into MySQL.
 3. Install dependencies:
    - `pip install -r my_flask_app/requirements.txt`
-4. Run the app:
+4. Start the app:
    - `run_app.bat`
-   - or `cd my_flask_app` then `python app.py`
+   - or `cd my_flask_app` and run `python app.py`
 5. Open:
    - `http://127.0.0.1:5001`
 
-## Configuration
-Database credentials and secret key live in `my_flask_app/config.py`.
-You can override them with environment variables:
-- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+## Config
+Environment variables used by the app:
+- `DB_HOST`
+- `DB_PORT`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
 - `SECRET_KEY`

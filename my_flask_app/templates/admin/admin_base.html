@@ -23,25 +23,6 @@
                 <a href="{{ url_for('admin_events') }}" class="{% if request.endpoint in ['admin_events','add_event','update_event','delete_event'] %}active{% endif %}">Events</a>
                 <a href="{{ url_for('admin_logout') }}">Logout</a>
             </nav>
-
-            <section class="admin-sidebar-section">
-                <div class="admin-sidebar-section-head">
-                    <h3>Email Subscribers</h3>
-                    <p>{{ newsletter_subscriber_count }} saved email{{ 's' if newsletter_subscriber_count != 1 else '' }}</p>
-                </div>
-
-                <div class="admin-subscriber-list">
-                    {% if newsletter_subscribers %}
-                        {% for subscriber in newsletter_subscribers %}
-                            <div class="admin-subscriber-item" title="{{ subscriber.email }}">
-                                {{ subscriber.email }}
-                            </div>
-                        {% endfor %}
-                    {% else %}
-                        <p class="admin-sidebar-empty">No subscribers yet. The first sign-up will appear here.</p>
-                    {% endif %}
-                </div>
-            </section>
         </aside>
 
         <section class="admin-content">

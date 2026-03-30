@@ -4,11 +4,10 @@
 
 {% block content %}
 <main>
-        <!-- Hero Section with Search -->
         <section class="hero">
             <div class="container">
-                <h1>Discover Bristol's Vibrant Event Scene</h1>
-                <p>From music festivals to workshops, find and book your perfect Bristol experience</p>
+                <h1>Find Bristol events worth booking</h1>
+                <p>Browse local events, check the details, and book tickets online.</p>
 
                 <form class="hero-search" action="{{ url_for('events') }}" method="get">
                     <input type="text" name="q" placeholder="Search events, venues, or locations..." value="{{ request.args.get('q', '') }}">
@@ -28,7 +27,6 @@
         </section>
 
         <div class="container">
-            <!-- Statistics Section -->
             <section class="stats-section">
                 <div class="stats-grid">
                     <div class="stat">
@@ -50,7 +48,6 @@
                 </div>
             </section>
 
-            <!-- Event Categories -->
             <section style="margin: 3rem 0;">
                 <h2>Event Categories</h2>
                 <div class="categories-grid">
@@ -77,8 +74,6 @@
                 </div>
             </section>
 
-            <!-- Featured Events -->
-            <!-- Featured Events -->
             <section style="margin: 3rem 0;">
                 <h2>Featured Events</h2>
                 {% set event_images = [
@@ -208,7 +203,7 @@
                                         name="content"
                                         rows="5"
                                         maxlength="1000"
-                                        placeholder="Tell everyone what you enjoyed about Bristol Community Events..."
+                                        placeholder="Tell us what you liked about the event..."
                                         required
                                     ></textarea>
                                     <small>Keep it under 1000 characters.</small>
@@ -232,7 +227,7 @@
                 <div class="newsletter-card">
                     <div class="newsletter-copy">
                         <p class="newsletter-kicker">Email updates</p>
-                        <h2>Get the next Bristol event drop in your inbox</h2>
+                        <h2>Get Bristol event updates in your inbox</h2>
                         <p>Subscribe for new community events, venue updates, and booking reminders from Bristol Community Events.</p>
 
                         <div class="newsletter-highlights" aria-label="Newsletter benefits">
