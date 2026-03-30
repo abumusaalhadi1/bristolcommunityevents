@@ -989,6 +989,77 @@ def count_contact_messages(cursor, status=None):
     return cursor.fetchone()["count"] or 0
 
 
+def fetch_newsletter_subscribers(cursor, limit=None):
+    limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
+
+    cursor.execute(
+        f"""
+        SELECT subscriber_id, email, created_at
+        FROM newsletter_subscribers
+        ORDER BY created_at DESC, subscriber_id DESC
+        {limit_clause}
+        """
+    )
+    return cursor.fetchall()
+
+
+def create_newsletter_subscribers_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+            subscriber_id INT PRIMARY KEY AUTO_INCREMENT,
+            email VARCHAR(255) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_newsletter_subscribers_email (email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def ensure_newsletter_subscribers_table(cursor):
+    if not table_exists(cursor, "newsletter_subscribers"):
+        create_newsletter_subscribers_table(cursor)
+        return
+
+    add_column_if_missing(
+        cursor,
+        "newsletter_subscribers",
+        "created_at",
+        "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER email",
+    )
+
+
+def seed_default_newsletter_subscribers(cursor):
+    cursor.execute("SELECT COUNT(*) AS count FROM newsletter_subscribers")
+    subscriber_count = cursor.fetchone()["count"] or 0
+    if subscriber_count > 0:
+        return
+
+    cursor.execute(
+        """
+        SELECT LOWER(TRIM(email)) AS email
+        FROM users
+        WHERE email IS NOT NULL AND TRIM(email) <> ''
+        GROUP BY LOWER(TRIM(email))
+        ORDER BY MIN(user_id) ASC
+        LIMIT 5
+        """
+    )
+    seed_emails = [row["email"] for row in cursor.fetchall() if row.get("email")]
+    if not seed_emails and DEFAULT_ADMIN_EMAIL:
+        seed_emails = [DEFAULT_ADMIN_EMAIL.lower()]
+
+    now = current_datetime()
+    for email in seed_emails:
+        cursor.execute(
+            """
+            INSERT IGNORE INTO newsletter_subscribers (email, created_at)
+            VALUES (%s, %s)
+            """,
+            (email, now),
+        )
+
+
 def initialize_database():
     global _db_initialized
     if _db_initialized:
@@ -1032,6 +1103,7 @@ def initialize_database():
         ensure_event_venue_foreign_key(cursor)
         ensure_contact_messages_table(cursor)
         ensure_reviews_table(cursor)
+        ensure_newsletter_subscribers_table(cursor)
 
         cursor.execute("UPDATE users SET role=%s WHERE role IS NULL OR role=''", (ROLE_USER,))
         cursor.execute(
@@ -1047,6 +1119,7 @@ def initialize_database():
         )
 
         bootstrap_default_admin(cursor)
+        seed_default_newsletter_subscribers(cursor)
         conn.commit()
         _db_initialized = True
     finally:
@@ -1130,10 +1203,32 @@ def load_current_user():
     g.current_user = user
 
 
+def load_admin_sidebar_data():
+    current_user = getattr(g, "current_user", None)
+    if not current_user or current_user.get("role") != ROLE_ADMIN:
+        g.newsletter_subscribers = []
+        g.newsletter_subscriber_count = 0
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        subscribers = fetch_newsletter_subscribers(cursor)
+        g.newsletter_subscribers = subscribers
+        g.newsletter_subscriber_count = len(subscribers)
+    except mysql.connector.Error:
+        g.newsletter_subscribers = []
+        g.newsletter_subscriber_count = 0
+    finally:
+        cursor.close()
+        conn.close()
+
+
 @app.before_request
 def prepare_request_context():
     initialize_database()
     load_current_user()
+    load_admin_sidebar_data()
 
 
 @app.context_processor
@@ -1143,6 +1238,8 @@ def inject_template_globals():
         "current_user": current_user,
         "is_authenticated": current_user is not None,
         "is_admin": bool(current_user and current_user.get("role") == ROLE_ADMIN),
+        "newsletter_subscribers": getattr(g, "newsletter_subscribers", []),
+        "newsletter_subscriber_count": getattr(g, "newsletter_subscriber_count", 0),
     }
 
 
@@ -2365,6 +2462,56 @@ def home():
     )
 
 
+@app.route("/subscribe", methods=["POST"])
+def subscribe():
+    email = request.form.get("email", "").strip().lower()
+    next_url = url_for("home") + "#newsletter"
+
+    if not email:
+        flash("Please enter your email address.", "error")
+        return redirect(next_url)
+
+    if not is_valid_email(email):
+        flash("Please enter a valid email address.", "error")
+        return redirect(next_url)
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT subscriber_id
+            FROM newsletter_subscribers
+            WHERE email = %s
+            LIMIT 1
+            """,
+            (email,),
+        )
+        existing_subscriber = cursor.fetchone()
+        if existing_subscriber:
+            flash("This email is already subscribed.", "success")
+            return redirect(next_url)
+
+        cursor.execute(
+            """
+            INSERT INTO newsletter_subscribers (email, created_at)
+            VALUES (%s, %s)
+            """,
+            (email, current_datetime()),
+        )
+        conn.commit()
+        flash("Thanks for subscribing. We'll keep you updated.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(next_url)
+
+
 @app.route("/reviews", methods=["GET", "POST"])
 def submit_review():
     if request.method == "GET":
@@ -3100,6 +3247,12 @@ def admin_dashboard():
         approved_reviews_count=approved_reviews_count,
         recent_reviews=recent_reviews,
     )
+
+
+@app.route("/admin/subscribers")
+@admin_required
+def admin_subscribers():
+    return render_template("admin/subscribers.html")
 
 
 @app.route("/admin/venues")

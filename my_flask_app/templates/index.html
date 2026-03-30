@@ -226,5 +226,39 @@
                 </div>
             </div>
         </section>
+
+        <section class="newsletter-section" id="newsletter">
+            <div class="container">
+                <div class="newsletter-card">
+                    <div class="newsletter-copy">
+                        <p class="newsletter-kicker">Email updates</p>
+                        <h2>Get the next Bristol event drop in your inbox</h2>
+                        <p>Subscribe for new community events, venue updates, and booking reminders from Bristol Community Events.</p>
+
+                        <div class="newsletter-highlights" aria-label="Newsletter benefits">
+                            <span>New events first</span>
+                            <span>Local updates</span>
+                            <span>No spam</span>
+                        </div>
+                    </div>
+
+                    <form class="newsletter-form" method="POST" action="{{ url_for('subscribe') }}">
+                        <label for="newsletter_email">Email address</label>
+                        <div class="newsletter-form-row">
+                            <input
+                                type="email"
+                                id="newsletter_email"
+                                name="email"
+                                value="{{ current_user.email if is_authenticated and current_user.email else '' }}"
+                                placeholder="name@example.com"
+                                required
+                            >
+                            <button type="submit" class="btn">Subscribe</button>
+                        </div>
+                        <p class="newsletter-note">We only use your email for Bristol Community Events updates.</p>
+                    </form>
+                </div>
+            </div>
+        </section>
     </main>
 {% endblock %}

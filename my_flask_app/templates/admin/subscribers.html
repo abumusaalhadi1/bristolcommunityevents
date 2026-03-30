@@ -1,0 +1,29 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Subscribers | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <h1 style="margin: 0;">Subscribers</h1>
+</div>
+
+<div class="admin-card">
+    <div class="label">Saved Emails</div>
+    <div class="value">{{ newsletter_subscriber_count }}</div>
+    <div style="margin-top: 0.35rem; color: #5d6b7b; font-weight: 600;">
+        Subscriber emails are shown in the sidebar on the left, and new signups are stored in the database automatically.
+    </div>
+</div>
+
+<div class="admin-card" style="margin-top: 1rem;">
+    <div class="label">Latest Signup</div>
+    {% if newsletter_subscribers %}
+        <div class="value" style="font-size: 1.15rem; word-break: break-word;">{{ newsletter_subscribers[0].email }}</div>
+        <div style="margin-top: 0.35rem; color: #5d6b7b; font-weight: 600;">
+            Joined {{ newsletter_subscribers[0].created_at.strftime('%B %d, %Y %H:%M') if newsletter_subscribers[0].created_at else '-' }}
+        </div>
+    {% else %}
+        <div style="margin-top: 0.35rem; color: #5d6b7b; font-weight: 600;">No subscribers yet.</div>
+    {% endif %}
+</div>
+{% endblock %}
