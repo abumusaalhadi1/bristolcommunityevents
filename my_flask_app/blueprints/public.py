@@ -15,6 +15,7 @@ ROUTES = [
     ("/book-tickets", "book_tickets", {"methods": ["GET", "POST"]}),
     ("/event/<int:event_id>", "event_detail", {}),
     ("/book/<int:event_id>", "book", {"methods": ["GET", "POST"]}),
+    ("/waitlist/<int:event_id>", "join_waitlist", {"methods": ["POST"]}),
     ("/payment-details", "payment_details", {"methods": ["GET", "POST"]}),
     ("/bookings", "bookings_list", {}),
     ("/bookings/<int:booking_id>/receipt", "booking_receipt", {}),

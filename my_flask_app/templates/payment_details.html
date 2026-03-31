@@ -129,12 +129,24 @@
                     <strong>{{ pending_booking.tickets }}</strong>
                 </div>
                 <div class="payment-summary-row">
+                    <span>Booking Days</span>
+                    <strong>{{ pending_booking.booking_days }}</strong>
+                </div>
+                <div class="payment-summary-row">
                     <span>Student Discount</span>
                     <strong>{% if pending_booking.is_student %}Applied{% else %}Not applied{% endif %}</strong>
                 </div>
                 <div class="payment-summary-row">
                     <span>Subtotal</span>
                     <strong>&pound;{{ pending_booking.subtotal }}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Student Discount Value</span>
+                    <strong>-&pound;{{ pending_booking.student_discount or '0.00' }}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Advance Discount Value</span>
+                    <strong>-&pound;{{ pending_booking.advance_discount or '0.00' }}</strong>
                 </div>
                 <div class="payment-summary-row">
                     <span>Discount</span>
@@ -144,6 +156,12 @@
                     <span>Total</span>
                     <strong>&pound;{{ pending_booking.total_amount }}</strong>
                 </div>
+                {% if pending_booking.conditions %}
+                <div class="payment-summary-row">
+                    <span>Conditions</span>
+                    <strong>{{ pending_booking.conditions }}</strong>
+                </div>
+                {% endif %}
                 <div class="payment-summary-row">
                     <span>Selected Method</span>
                     <strong>{{ payment_method_label }}</strong>

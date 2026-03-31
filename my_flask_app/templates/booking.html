@@ -3,7 +3,8 @@
 {% block title %}Book Tickets | Bristol Community Events{% endblock %}
 
 {% block content %}
-{% set event_is_sold_out = event and event.remaining_seats is not none and event.remaining_seats <= 0 %}
+{% set event_is_sold_out = event and event.is_sold_out %}
+{% set event_is_bookable = event and event.is_bookable and not event_is_sold_out %}
 <main>
     <div class="container">
         <h1 style="margin: 2rem 0;">Book Your Tickets</h1>
@@ -32,7 +33,7 @@
                     <div class="flash error">No upcoming events are available to book right now.</div>
                 {% endif %}
 
-                {% if not event or not event_is_sold_out %}
+                {% if not event or event_is_bookable %}
                     <form
                         id="bookingForm"
                         method="POST"
@@ -40,10 +41,14 @@
                         data-price="{{ '%.2f'|format(event.price) if event and event.price is not none and event.price > 0 else '0.00' }}"
                         data-event-name="{{ event.event_name if event else '' }}"
                         data-event-date="{{ event.event_date_label if event else '' }}"
+                        data-event-start-date="{{ event.event_date.strftime('%Y-%m-%d') if event and event.event_date else '' }}"
+                        data-event-end-date="{{ event.event_end_date.strftime('%Y-%m-%d') if event and event.event_end_date else '' }}"
+                        data-event-duration="{{ event.event_duration_days if event else 1 }}"
                         data-venue-name="{{ event.venue_name if event else '' }}"
                         data-remaining-seats="{{ event.remaining_seats if event and event.remaining_seats is not none else '' }}"
                         data-max-tickets="{{ event.max_tickets if event else 0 }}"
                         data-booking-date="{{ booking_now.strftime('%B %d, %Y %H:%M') }}"
+                        data-booking-datetime="{{ booking_now.isoformat(timespec='seconds') }}"
                     >
                         <input type="hidden" name="payment_method" id="paymentMethod" value="paypal" />
 
@@ -58,6 +63,9 @@
                                             data-price="{{ '%.2f'|format(event_item.price) if event_item.price is not none and event_item.price > 0 else '0.00' }}"
                                             data-event-name="{{ event_item.event_name }}"
                                             data-event-date="{{ event_item.event_date_label }}"
+                                            data-event-start-date="{{ event_item.event_date.strftime('%Y-%m-%d') if event_item.event_date else '' }}"
+                                            data-event-end-date="{{ event_item.event_end_date.strftime('%Y-%m-%d') if event_item.event_end_date else '' }}"
+                                            data-event-duration="{{ event_item.event_duration_days }}"
                                             data-venue-name="{{ event_item.venue_name }}"
                                             data-remaining-seats="{{ event_item.remaining_seats if event_item.remaining_seats is not none else '' }}"
                                             data-max-tickets="{{ event_item.max_tickets }}"
@@ -88,6 +96,27 @@
                         </div>
 
                         <div class="form-group">
+                            <label for="booking_days">Booking Days</label>
+                            {% if event %}
+                                <select id="booking_days" name="booking_days" required>
+                                    {% for n in range(1, event.event_duration_days + 1) %}
+                                        <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }}</option>
+                                    {% endfor %}
+                                </select>
+                                {% if event.event_duration_days > 1 %}
+                                    <small>Select how many days you want to attend this event.</small>
+                                {% else %}
+                                    <small>This event runs for one day, so the booking is fixed to a single day.</small>
+                                {% endif %}
+                            {% else %}
+                                <select id="booking_days" name="booking_days" required disabled>
+                                    <option value="">Select an event</option>
+                                </select>
+                                <small id="bookingDaysHelp">Day options will appear after you choose an event.</small>
+                            {% endif %}
+                        </div>
+
+                        <div class="form-group">
                             <label for="full_name">Full Name</label>
                             <input type="text" id="full_name" value="{{ current_user.full_name }}" readonly required />
                         </div>
@@ -112,6 +141,34 @@
                         <button type="button" class="btn" id="proceedToPayment" disabled>Proceed to Payment</button>
                     </form>
                 {% endif %}
+
+                {% if event_is_sold_out %}
+                    <div class="booking-current-event" style="margin-top: 1rem;">
+                        <strong>Join the waitlist</strong>
+                        <p>This event is fully booked. Add your details and we'll offer the place to the top person on the list when a seat opens up.</p>
+                    </div>
+                    <form method="POST" action="{{ url_for('join_waitlist', event_id=event.event_id) }}">
+                        <div class="form-group">
+                            <label for="waitlistTickets">Number of Tickets</label>
+                            <select id="waitlistTickets" name="tickets" required>
+                                {% for n in range(1, 11) %}
+                                    <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="waitlistDays">Booking Days</label>
+                            <select id="waitlistDays" name="booking_days" required>
+                                {% for n in range(1, event.event_duration_days + 1) %}
+                                    <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <button type="submit" class="btn" style="width: auto;">Join Waitlist</button>
+                    </form>
+                {% endif %}
             </div>
 
             <div class="booking-summary">
@@ -129,10 +186,22 @@
                         Remaining seats: <span id="summaryRemainingSeats">{{ event.remaining_label if event else '' }}</span>
                     </p>
                     <p>Tickets: <span id="summaryTickets">{{ 0 if event_is_sold_out else (1 if event else 0) }}</span></p>
-                    <p>Price per ticket: &pound;<span id="summaryPrice">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></p>
-                    <p>Subtotal: &pound;<span id="summarySubtotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></p>
-                    <p>Student discount (10%): -&pound;<span id="summaryDiscount">0.00</span></p>
-                    <p><strong>Total: &pound;<span id="summaryTotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></strong></p>
+                    <p>Booking days: <span id="summaryBookingDays">{{ 0 if event_is_sold_out else (1 if event else 0) }}</span></p>
+                    <p>Price per ticket per day: &pound;<span id="summaryPrice">
+                        {% if event_is_sold_out or not event %}
+                            0.00
+                        {% elif event.event_duration_days > 1 and event.price is not none %}
+                            {{ "%.2f"|format((event.price / event.event_duration_days)|float) }}
+                        {% elif event.price is not none and event.price > 0 %}
+                            {{ "%.2f"|format(event.price) }}
+                        {% else %}
+                            0.00
+                        {% endif %}
+                    </span></p>
+                    <p>Subtotal: &pound;<span id="summarySubtotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format((event.price / event.event_duration_days)|float) if event and event.event_duration_days > 1 and event.price is not none else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00")) }}</span></p>
+                    <p>Student discount (10%): -&pound;<span id="summaryStudentDiscount">0.00</span></p>
+                    <p>Advance booking discount: -&pound;<span id="summaryAdvanceDiscount">0.00</span></p>
+                    <p><strong>Total: &pound;<span id="summaryTotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format((event.price / event.event_duration_days)|float) if event and event.event_duration_days > 1 and event.price is not none else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00")) }}</span></strong></p>
                 </div>
                 <p><small>Receipts are available after the payment details page is confirmed.</small></p>
                 <p><small><a class="admin-link" href="{{ url_for('refund_policy') }}">View refund policy</a></small></p>

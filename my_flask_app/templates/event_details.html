@@ -19,7 +19,10 @@
             <div class="event-content">
                 <div class="event-details">
                     <div class="event-detail">
-                        <strong>Date:</strong> {{ event.event_date.strftime('%B %d, %Y') }}
+                        <strong>Date:</strong> {{ event.event_date_range_label or event.event_date.strftime('%B %d, %Y') }}
+                    </div>
+                    <div class="event-detail">
+                        <strong>Duration:</strong> {{ event.event_duration_days }} day{{ 's' if event.event_duration_days != 1 else '' }}
                     </div>
                     <div class="event-detail">
                         <strong>Venue:</strong> {{ event.venue_name or 'TBD' }}
@@ -39,20 +42,44 @@
                     <div class="event-detail">
                         <strong>Remaining:</strong> {{ event.remaining_seats if event.remaining_seats is not none else '-' }}
                     </div>
+                    <div class="event-detail">
+                        <strong>Booking opens:</strong> {{ event.booking_open_date or 'Now' }}
+                    </div>
+                    <div class="event-detail">
+                        <strong>Last date to book:</strong> {{ event.booking_close_date or (event.event_end_date.strftime('%B %d, %Y') if event.event_end_date else '-') }}
+                    </div>
+                    <div class="event-detail">
+                        <strong>Conditions:</strong> {{ event.conditions or 'None listed' }}
+                    </div>
                 </div>
                 <p class="event-price">
                     {% if event.price is none or event.price == 0 %}
                         Free
                     {% else %}
                         &pound;{{ "%.2f"|format(event.price) }}
+                        {% if event.event_duration_days > 1 %}
+                            <small style="display:block; font-weight: 500;">Approx. &pound;{{ "%.2f"|format((event.price / event.event_duration_days)|float) }} per day</small>
+                        {% endif %}
                     {% endif %}
                 </p>
-                {% if event.remaining_seats is not none and event.remaining_seats <= 0 %}
-                    <span class="btn" style="width: auto; opacity: .65; cursor: not-allowed;">Sold Out</span>
-                {% elif is_authenticated %}
-                    <a href="{{ url_for('book', event_id=event.event_id) }}" class="btn" style="width: auto;">Book Now</a>
+                {% if event.is_sold_out %}
+                    {% if is_authenticated %}
+                        <form method="POST" action="{{ url_for('join_waitlist', event_id=event.event_id) }}" style="display:flex; gap:.75rem; flex-wrap: wrap; align-items: flex-end;">
+                            <input type="hidden" name="tickets" value="1" />
+                            <input type="hidden" name="booking_days" value="1" />
+                            <button type="submit" class="btn" style="width: auto;">Join Waitlist</button>
+                        </form>
+                    {% else %}
+                        <a href="{{ url_for('login', next=url_for('event_detail', event_id=event.event_id)) }}" class="btn" style="width: auto;">Login to Join Waitlist</a>
+                    {% endif %}
+                {% elif event.is_bookable %}
+                    {% if is_authenticated %}
+                        <a href="{{ url_for('book', event_id=event.event_id) }}" class="btn" style="width: auto;">Book Now</a>
+                    {% else %}
+                        <a href="{{ url_for('login', next=url_for('book', event_id=event.event_id)) }}" class="btn" style="width: auto;">Login to Book</a>
+                    {% endif %}
                 {% else %}
-                    <a href="{{ url_for('login', next=url_for('book', event_id=event.event_id)) }}" class="btn" style="width: auto;">Login to Book</a>
+                    <span class="btn" style="width: auto; opacity: .75; cursor: not-allowed;">Bookings open on {{ event.booking_open_date or 'soon' }}</span>
                 {% endif %}
             </div>
         </div>

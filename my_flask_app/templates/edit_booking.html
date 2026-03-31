@@ -1,0 +1,107 @@
+{% extends "layout.html" %}
+
+{% block title %}Update Booking | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main class="container page-section">
+    <div class="page-header">
+        <div>
+            <p class="eyebrow">Manage your booking</p>
+            <h1>Update Booking #{{ booking.booking_id }}</h1>
+            <p>Change the ticket count, student discount, or contact phone before the event date passes.</p>
+        </div>
+        <div class="account-actions">
+            <a class="btn btn-soft" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}">Back to Receipt</a>
+            <a class="btn" href="{{ url_for('my_bookings') }}">My Bookings</a>
+        </div>
+    </div>
+
+    <div class="receipt-grid">
+        <section class="receipt-card">
+            <h2>Current Booking</h2>
+            <div class="account-summary">
+                <div class="account-row">
+                    <span>Event</span>
+                    <strong>{{ booking.event_name }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Date</span>
+                    <strong>
+                        {% if booking.event_end_date and booking.event_end_date != booking.event_date %}
+                            {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }} - {{ booking.event_end_date.strftime('%B %d, %Y') if booking.event_end_date else '-' }}
+                        {% else %}
+                            {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}
+                        {% endif %}
+                    </strong>
+                </div>
+                <div class="account-row">
+                    <span>Venue</span>
+                    <strong>{{ booking.venue_name or '-' }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Tickets</span>
+                    <strong>{{ booking.tickets }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Student Discount</span>
+                    <strong>{% if booking.is_student %}Applied{% else %}Not applied{% endif %}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Contact Phone</span>
+                    <strong>{{ booking.contact_phone or booking.phone or '-' }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Current Total</span>
+                    <strong>&pound;{{ "%.2f"|format(booking.amount or 0) }}</strong>
+                </div>
+                {% if booking.remaining_for_update is not none %}
+                <div class="account-row">
+                    <span>Tickets Still Allowed</span>
+                    <strong>{{ booking.remaining_for_update }}</strong>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="receipt-card">
+            <h2>Update Details</h2>
+            <form method="POST" class="account-form">
+                <div class="form-group">
+                    <label for="tickets">Number of Tickets</label>
+                    <select id="tickets" name="tickets" required>
+                        {% for n in range(1, max_tickets + 1) %}
+                            <option value="{{ n }}" {% if n == booking.tickets %}selected{% endif %}>{{ n }}</option>
+                        {% endfor %}
+                    </select>
+                    <small>We re-check seats when you save your changes.</small>
+                </div>
+
+                <div class="form-group">
+                    <label class="student-discount-toggle" style="display:flex; gap:.75rem; align-items:center; justify-content:space-between;">
+                        <span>Student discount (10%)</span>
+                        <input type="checkbox" name="is_student" {% if booking.is_student %}checked{% endif %} />
+                    </label>
+                    <small>Tick this if you forgot to apply the student discount on the original booking.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="contact_phone">Contact Phone</label>
+                    <input type="tel" id="contact_phone" name="contact_phone" value="{{ booking.contact_phone or booking.phone or '' }}" placeholder="Enter a contact number" />
+                    <small>We keep this with the booking so your receipt stays up to date.</small>
+                </div>
+
+                <div class="account-actions" style="margin-top: 1rem;">
+                    <button type="submit" class="btn" style="width: auto;">Save Changes</button>
+                    <a class="btn btn-soft" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}">Cancel</a>
+                </div>
+            </form>
+        </section>
+    </div>
+
+    <section class="receipt-card receipt-card-wide" style="margin-top: 1.25rem;">
+        <h2>What happens when you save</h2>
+        <p>The booking is updated only if the event is still in the future, your booking is still active, and there are enough seats available for the new ticket quantity.</p>
+        <p>The subtotal, discounts, and payment amount are recalculated automatically, and your receipt will reflect the new values right away.</p>
+    </section>
+</main>
+{% endblock %}

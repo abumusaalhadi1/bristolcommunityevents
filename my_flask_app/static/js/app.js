@@ -25,6 +25,10 @@
         return form ? form.querySelector('[name="tickets"]') : null;
     }
 
+    function getBookingDaysField() {
+        return form ? form.querySelector('[name="booking_days"]') : null;
+    }
+
     function getStudentField() {
         return form ? form.querySelector('[name="is_student"]') : null;
     }
@@ -38,6 +42,9 @@
             price: form.dataset.price || '0.00',
             name: form.dataset.eventName || '',
             date: form.dataset.eventDate || '',
+            startDate: form.dataset.eventStartDate || '',
+            endDate: form.dataset.eventEndDate || '',
+            duration: form.dataset.eventDuration || '1',
             venue: form.dataset.venueName || '',
             remainingSeats: form.dataset.remainingSeats || '',
             maxTickets: form.dataset.maxTickets || '0',
@@ -55,6 +62,9 @@
             price: option.dataset.price || '0.00',
             name: option.dataset.eventName || option.textContent.trim(),
             date: option.dataset.eventDate || '',
+            startDate: option.dataset.eventStartDate || '',
+            endDate: option.dataset.eventEndDate || '',
+            duration: option.dataset.eventDuration || '1',
             venue: option.dataset.venueName || '',
             remainingSeats: option.dataset.remainingSeats || '',
             maxTickets: option.dataset.maxTickets || '10',
@@ -91,6 +101,38 @@
             ticketsField.appendChild(option);
         }
         ticketsField.value = selectedValue;
+    }
+
+    function applyBookingDayOptions(maxDays, preserveValue) {
+        const bookingDaysField = getBookingDaysField();
+        if (!bookingDaysField) return;
+
+        const max = Math.max(0, Number(maxDays) || 0);
+        const selectedValue = preserveValue && Number(preserveValue) <= max ? String(preserveValue) : '1';
+
+        bookingDaysField.innerHTML = '';
+
+        if (max < 1) {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Select an event first';
+            bookingDaysField.appendChild(placeholder);
+            bookingDaysField.disabled = true;
+            bookingDaysField.value = '';
+            return;
+        }
+
+        bookingDaysField.disabled = false;
+        for (let i = 1; i <= max; i += 1) {
+            const option = document.createElement('option');
+            option.value = String(i);
+            option.textContent = String(i);
+            if (String(i) === selectedValue) {
+                option.selected = true;
+            }
+            bookingDaysField.appendChild(option);
+        }
+        bookingDaysField.value = selectedValue;
     }
 
     function syncEventSummary(eventData) {
@@ -141,10 +183,14 @@
             form.dataset.price = '0.00';
             form.dataset.eventName = '';
             form.dataset.eventDate = '';
+            form.dataset.eventStartDate = '';
+            form.dataset.eventEndDate = '';
+            form.dataset.eventDuration = '1';
             form.dataset.venueName = '';
             form.dataset.remainingSeats = '';
             form.dataset.maxTickets = '0';
             applyTicketOptions(0, '');
+            applyBookingDayOptions(0, '');
             syncEventSummary(null);
             return;
         }
@@ -152,39 +198,76 @@
         form.dataset.price = eventData.price || '0.00';
         form.dataset.eventName = eventData.name || '';
         form.dataset.eventDate = eventData.date || '';
+        form.dataset.eventStartDate = eventData.startDate || '';
+        form.dataset.eventEndDate = eventData.endDate || '';
+        form.dataset.eventDuration = eventData.duration || '1';
         form.dataset.venueName = eventData.venue || '';
         form.dataset.remainingSeats = eventData.remainingSeats || '';
         form.dataset.maxTickets = String(eventData.maxTickets || 0);
 
         const ticketsField = getTicketsField();
         const currentTickets = ticketsField && ticketsField.value ? ticketsField.value : '1';
+        const bookingDaysField = getBookingDaysField();
+        const currentBookingDays = bookingDaysField && bookingDaysField.value ? bookingDaysField.value : '1';
         applyTicketOptions(eventData.maxTickets || 0, currentTickets);
+        applyBookingDayOptions(eventData.duration || 1, currentBookingDays);
         syncEventSummary(eventData);
+    }
+
+    function advanceDiscountRateForDays(daysBeforeEvent) {
+        if (!Number.isFinite(daysBeforeEvent)) return 0;
+        if (daysBeforeEvent >= 50 && daysBeforeEvent <= 60) return 0.2;
+        if (daysBeforeEvent >= 35 && daysBeforeEvent < 50) return 0.15;
+        if (daysBeforeEvent >= 25 && daysBeforeEvent < 35) return 0.1;
+        if (daysBeforeEvent >= 15 && daysBeforeEvent < 25) return 0.05;
+        return 0;
     }
 
     function updateBookingTotals() {
         if (!form) return;
 
         const basePrice = Number(form.dataset.price || '0');
+        const eventDuration = Math.max(1, Number(form.dataset.eventDuration || '1') || 1);
         const ticketsField = getTicketsField();
         const rawTickets = ticketsField && ticketsField.value ? parseInt(ticketsField.value, 10) : 0;
         const tickets = Number.isFinite(rawTickets) && rawTickets > 0 ? rawTickets : 0;
+        const bookingDaysField = getBookingDaysField();
+        const rawBookingDays = bookingDaysField && bookingDaysField.value ? parseInt(bookingDaysField.value, 10) : 0;
+        const bookingDays = Number.isFinite(rawBookingDays) && rawBookingDays > 0 ? rawBookingDays : 0;
         const isStudentField = getStudentField();
         const isStudent = Boolean(isStudentField && isStudentField.checked);
+        const eventStartDate = form.dataset.eventStartDate || '';
+        const bookingDateText = form.dataset.bookingDatetime || '';
+        const perDayPrice = eventDuration > 1 ? basePrice / eventDuration : basePrice;
+        const subtotal = perDayPrice * tickets * bookingDays;
+        const studentDiscount = isStudent ? subtotal * 0.1 : 0;
 
-        const subtotal = basePrice * tickets;
-        const discount = isStudent ? subtotal * 0.1 : 0;
-        const total = subtotal - discount;
+        let advanceDiscount = 0;
+        if (eventStartDate && bookingDateText) {
+            const startDate = new Date(`${eventStartDate}T00:00:00`);
+            const bookedAt = new Date(bookingDateText);
+            if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(bookedAt.getTime())) {
+                const diffMs = startDate.getTime() - bookedAt.getTime();
+                const daysBeforeEvent = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                advanceDiscount = subtotal * advanceDiscountRateForDays(daysBeforeEvent);
+            }
+        }
+
+        const total = Math.max(subtotal - studentDiscount - advanceDiscount, 0);
 
         const summaryTickets = document.getElementById('summaryTickets');
+        const summaryBookingDays = document.getElementById('summaryBookingDays');
         const summarySubtotal = document.getElementById('summarySubtotal');
-        const summaryDiscount = document.getElementById('summaryDiscount');
+        const summaryStudentDiscount = document.getElementById('summaryStudentDiscount');
+        const summaryAdvanceDiscount = document.getElementById('summaryAdvanceDiscount');
         const summaryTotal = document.getElementById('summaryTotal');
         const modalTotal = document.getElementById('modalTotal');
 
         if (summaryTickets) summaryTickets.textContent = String(tickets);
+        if (summaryBookingDays) summaryBookingDays.textContent = String(bookingDays);
         if (summarySubtotal) summarySubtotal.textContent = formatMoney(subtotal);
-        if (summaryDiscount) summaryDiscount.textContent = formatMoney(discount);
+        if (summaryStudentDiscount) summaryStudentDiscount.textContent = formatMoney(studentDiscount);
+        if (summaryAdvanceDiscount) summaryAdvanceDiscount.textContent = formatMoney(advanceDiscount);
         if (summaryTotal) summaryTotal.textContent = formatMoney(total);
         if (modalTotal) modalTotal.textContent = formatMoney(total);
     }
@@ -194,6 +277,7 @@
         let isValid = true;
         const requiredFields = form.querySelectorAll('[required]');
         const maxTickets = Number(form.dataset.maxTickets || '10') || 10;
+        const maxBookingDays = Number(form.dataset.eventDuration || '1') || 1;
 
         requiredFields.forEach((field) => {
             if (field.disabled) {
@@ -219,6 +303,14 @@
             if (field.name === 'tickets' && field.value.trim()) {
                 const tickets = parseInt(field.value, 10);
                 if (tickets < 1 || tickets > maxTickets) {
+                    if (showErrors && formGroup) formGroup.classList.add('error');
+                    isValid = false;
+                }
+            }
+
+            if (field.name === 'booking_days' && field.value.trim()) {
+                const bookingDays = parseInt(field.value, 10);
+                if (bookingDays < 1 || bookingDays > maxBookingDays) {
                     if (showErrors && formGroup) formGroup.classList.add('error');
                     isValid = false;
                 }

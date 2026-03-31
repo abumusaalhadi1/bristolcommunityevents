@@ -47,6 +47,8 @@
                 <td>{{ u.tickets_total }}</td>
                 <td class="admin-actions">
                     <a class="admin-link" href="{{ url_for('admin_bookings', q=u.email) }}">View bookings</a>
+                    <a class="admin-link" href="{{ url_for('admin_reset_user_password', user_id=u.user_id) }}">Reset password</a>
+                    <span class="admin-link" style="opacity: .45; cursor: not-allowed;" title="Coming soon">Send reset password link to email</span>
                 </td>
             </tr>
             {% else %}

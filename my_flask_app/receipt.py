@@ -199,6 +199,13 @@ def build_booking_receipt_pdf(booking):
     add_field("Payment Status", booking.get("payment_status") or "Pending")
     add_field("Booked At", format_receipt_datetime(booking.get("booked_at") or booking.get("created_at")))
     add_field("Tickets", booking.get("tickets") or 0)
+    add_field("Booking Days", booking.get("booking_days") or 1)
+    add_field("Subtotal", f"£{_to_money(booking.get('subtotal_amount')):.2f}")
+    add_field("Student Discount", f"-£{_to_money(booking.get('student_discount_amount')):.2f}")
+    add_field("Advance Discount", f"-£{_to_money(booking.get('advance_discount_amount')):.2f}")
+    add_field("Discount Total", f"-£{_to_money(booking.get('discount_applied')):.2f}")
+    add_field("Cancellation Charge", f"£{_to_money(booking.get('cancellation_charge')):.2f}")
+    add_field("Refund Amount", f"£{_to_money(booking.get('refund_amount')):.2f}")
     add_field("Payment Method", (booking.get("payment_method") or "card").title())
     add_field("Total Paid", f"£{_to_money(booking.get('amount')):.2f}")
 
@@ -206,16 +213,23 @@ def build_booking_receipt_pdf(booking):
     add_section("Attendee Details")
     add_field("Name", booking.get("full_name"))
     add_field("Email", booking.get("email"))
-    add_field("Phone", booking.get("phone") or "-")
+    add_field("Contact Phone", booking.get("contact_phone") or booking.get("phone") or "-")
     add_field("Role", (booking.get("role") or "user").title())
 
     y -= 8
     add_section("Event Details")
     add_field("Event", booking.get("event_name"))
-    add_field("Date", format_receipt_date(booking.get("event_date")))
+    if booking.get("event_end_date") and booking.get("event_end_date") != booking.get("event_date"):
+        add_field(
+            "Date",
+            f"{format_receipt_date(booking.get('event_date'))} - {format_receipt_date(booking.get('event_end_date'))}",
+        )
+    else:
+        add_field("Date", format_receipt_date(booking.get("event_date")))
     add_field("Venue", booking.get("venue_name") or "-")
     add_field("Location", booking.get("location") or booking.get("address") or "-")
     add_field("Category", booking.get("category_name") or "-")
+    add_field("Conditions", booking.get("conditions") or "-")
 
     y -= 8
     pdf_add_line(ops, margin, y, page_width - margin, y, width=0.7, gray=0.82)

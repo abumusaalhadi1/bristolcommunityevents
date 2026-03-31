@@ -48,6 +48,7 @@ CREATE TABLE bookings (
   booking_id INT PRIMARY KEY AUTO_INCREMENT,
   user_id INT NOT NULL,
   event_id INT NOT NULL,
+  contact_phone VARCHAR(50),
   booking_date DATE,
   tickets INT NOT NULL,
   is_student BOOLEAN DEFAULT FALSE,

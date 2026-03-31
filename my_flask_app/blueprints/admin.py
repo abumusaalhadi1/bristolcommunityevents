@@ -13,6 +13,7 @@ ROUTES = [
     ("/admin/logout", "admin_logout", {}),
     ("/admin", "admin_dashboard", {}),
     ("/admin/subscribers", "admin_subscribers", {}),
+    ("/admin/reports", "admin_reports", {}),
     ("/admin/venues", "admin_venues", {}),
     ("/admin/venues/add", "add_venue", {"methods": ["GET", "POST"]}),
     ("/admin/venues/<int:venue_id>/edit", "update_venue", {"methods": ["GET", "POST"]}),
@@ -22,6 +23,7 @@ ROUTES = [
     ("/admin/bookings/<int:booking_id>/edit", "admin_edit_booking", {"methods": ["GET", "POST"]}),
     ("/admin/bookings/<int:booking_id>/delete", "admin_delete_booking", {"methods": ["POST"]}),
     ("/admin/users", "admin_users", {}),
+    ("/admin/users/<int:user_id>/password", "admin_reset_user_password", {"methods": ["GET", "POST"]}),
     ("/admin/reviews", "admin_reviews", {}),
     ("/admin/contact-messages", "admin_contact_messages", {}),
     ("/admin/contact-messages/<int:message_id>/reply", "admin_reply_contact_message", {"methods": ["GET", "POST"]}),
@@ -29,10 +31,10 @@ ROUTES = [
     ("/admin/reviews/<int:review_id>/approve", "admin_approve_review", {"methods": ["POST"]}),
     ("/admin/reviews/<int:review_id>/reject", "admin_reject_review", {"methods": ["POST"]}),
     ("/admin/reviews/<int:review_id>/delete", "admin_delete_review", {"methods": ["POST"]}),
+    ("/admin/events/<int:event_id>/reduce-price", "reduce_event_price", {"methods": ["POST"]}),
 ]
 
 
 @bp.record_once
 def register_admin_routes(state):
     register_url_rules(state, ROUTES)
-

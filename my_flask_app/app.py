@@ -52,9 +52,27 @@ PAYMENT_METHOD_LABELS = {
     "bank": "Bank Transfer",
 }
 PENDING_BOOKING_SESSION_KEY = "pending_booking"
+BOOKING_ADVANCE_WINDOW_DAYS = 60
+WAITLIST_OFFER_HOLD_DAYS = 2
+EVENT_PRICE_REDUCTION_THRESHOLD = Decimal("0.25")
+EVENT_PRICE_REDUCTION_BOOKING_RATIO = Decimal("0.50")
+EVENT_PRICE_REDUCTION_LOOKBACK_DAYS = 10
 REFUND_WINDOW_HOURS = 72
 REFUND_PROCESSING_WORKING_DAYS = 2
 ACTIVE_BOOKING_CONDITION = "COALESCE(status, 'Confirmed') <> 'Cancelled'"
+
+WAITLIST_STATUS_WAITING = "Waiting"
+WAITLIST_STATUS_OFFERED = "Offered"
+WAITLIST_STATUS_CONVERTED = "Converted"
+WAITLIST_STATUS_EXPIRED = "Expired"
+WAITLIST_STATUS_CANCELLED = "Cancelled"
+WAITLIST_STATUSES = (
+    WAITLIST_STATUS_WAITING,
+    WAITLIST_STATUS_OFFERED,
+    WAITLIST_STATUS_CONVERTED,
+    WAITLIST_STATUS_EXPIRED,
+    WAITLIST_STATUS_CANCELLED,
+)
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CARD_EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$")
@@ -83,6 +101,18 @@ def parse_ticket_count(value):
 
     if 1 <= tickets <= 10:
         return tickets
+    return None
+
+
+def parse_booking_days(value, max_days=1):
+    try:
+        booking_days = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    max_days = max(1, int(max_days or 1))
+    if 1 <= booking_days <= max_days:
+        return booking_days
     return None
 
 
@@ -280,7 +310,7 @@ def validate_payment_details(payment_method: str, form_data):
 def refund_deadline_for_event(event_date):
     if not event_date:
         return None
-    return event_date - timedelta(days=3)
+    return event_date - timedelta(days=40)
 
 
 def refund_is_allowed(event_date):
@@ -301,14 +331,205 @@ def to_money(value) -> Decimal:
         return Decimal("0.00")
 
 
-def compute_booking_amounts(price, tickets: int, is_student: bool):
-    unit_price = to_money(price)
-    subtotal = (unit_price * tickets).quantize(Decimal("0.01"))
-    discount = Decimal("0.00")
+def fetch_event_mix_counts(cursor, start_date, end_date):
+    cursor.execute(
+        """
+        SELECT
+            COALESCE(SUM(CASE WHEN booking_counts.total_bookings IS NULL THEN 1 ELSE 0 END), 0) AS no_booking_events_count,
+            COALESCE(SUM(CASE WHEN booking_counts.active_bookings > 0 THEN 1 ELSE 0 END), 0) AS active_booked_events_count,
+            COALESCE(SUM(
+                CASE
+                    WHEN booking_counts.total_bookings > 0
+                         AND booking_counts.active_bookings = 0
+                    THEN 1 ELSE 0
+                END
+            ), 0) AS cancelled_only_events_count
+        FROM events e
+        LEFT JOIN (
+            SELECT b.event_id,
+                   COUNT(*) AS total_bookings,
+                   SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN 1 ELSE 0 END) AS active_bookings
+            FROM bookings b
+            GROUP BY b.event_id
+        ) booking_counts ON booking_counts.event_id = e.event_id
+        WHERE e.event_date BETWEEN %s AND %s
+        """,
+        (start_date, end_date),
+    )
+    return cursor.fetchone() or {}
+
+
+def event_duration_days(event) -> int:
+    if not event:
+        return 1
+
+    event_start = event.get("event_date")
+    event_end = event.get("event_end_date") or event_start
+
+    if not event_start or not event_end or event_end < event_start:
+        return 1
+
+    return max((event_end - event_start).days + 1, 1)
+
+
+def event_date_range_label(event) -> str:
+    if not event or not event.get("event_date"):
+        return ""
+
+    event_start = event["event_date"]
+    event_end = event.get("event_end_date") or event_start
+
+    if event_end and event_end != event_start:
+        return f"{event_start.strftime('%B %d, %Y')} - {event_end.strftime('%B %d, %Y')}"
+
+    return event_start.strftime("%B %d, %Y")
+
+
+def event_booking_open_date(event):
+    event_start = event.get("event_date") if event else None
+    if not event_start:
+        return None
+    return event_start - timedelta(days=BOOKING_ADVANCE_WINDOW_DAYS)
+
+
+def event_booking_close_date(event):
+    if not event:
+        return None
+    return event.get("event_end_date") or event.get("event_date")
+
+
+def is_event_bookable(event, reference_date=None) -> bool:
+    if not event:
+        return False
+
+    reference_date = reference_date or current_date()
+    event_start = event.get("event_date")
+    event_close = event_booking_close_date(event)
+    if not event_start or not event_close:
+        return False
+
+    open_date = event_booking_open_date(event)
+    return bool(open_date and open_date <= reference_date <= event_close)
+
+
+def days_before_event(event_date, reference_date=None):
+    if not event_date:
+        return None
+
+    reference_date = reference_date or current_date()
+    return (event_date - reference_date).days
+
+
+def advance_booking_discount_rate(days_before: int | None):
+    if days_before is None:
+        return Decimal("0.00")
+    if days_before > BOOKING_ADVANCE_WINDOW_DAYS:
+        return Decimal("0.00")
+    if 50 <= days_before <= 60:
+        return Decimal("0.20")
+    if 35 <= days_before < 50:
+        return Decimal("0.15")
+    if 25 <= days_before < 35:
+        return Decimal("0.10")
+    if 15 <= days_before < 25:
+        return Decimal("0.05")
+    return Decimal("0.00")
+
+
+def calculate_booking_breakdown(
+    price,
+    tickets: int,
+    is_student: bool,
+    *,
+    booking_days: int = 1,
+    event_duration: int = 1,
+    event_date=None,
+    booked_at=None,
+):
+    event_total_price = to_money(price)
+    tickets = max(int(tickets or 0), 1)
+    booking_days = max(int(booking_days or 1), 1)
+    event_duration = max(int(event_duration or 1), 1)
+    booked_at = booked_at or current_datetime()
+
+    per_day_price = (event_total_price / Decimal(event_duration)).quantize(Decimal("0.01"))
+    if event_duration == 1:
+        per_day_price = event_total_price
+
+    base_subtotal = (per_day_price * tickets * booking_days).quantize(Decimal("0.01"))
+    student_discount = Decimal("0.00")
     if is_student:
-        discount = (subtotal * Decimal("0.10")).quantize(Decimal("0.01"))
-    total = (subtotal - discount).quantize(Decimal("0.01"))
-    return subtotal, discount, total
+        student_discount = (base_subtotal * Decimal("0.10")).quantize(Decimal("0.01"))
+
+    advance_days = days_before_event(event_date, booked_at.date()) if event_date else None
+    advance_rate = advance_booking_discount_rate(advance_days)
+    advance_discount = (base_subtotal * advance_rate).quantize(Decimal("0.01"))
+    discount_total = (student_discount + advance_discount).quantize(Decimal("0.01"))
+    total = (base_subtotal - discount_total).quantize(Decimal("0.01"))
+    if total < 0:
+        total = Decimal("0.00")
+
+    return {
+        "per_day_price": per_day_price,
+        "base_subtotal": base_subtotal,
+        "student_discount": student_discount,
+        "advance_discount": advance_discount,
+        "discount_total": discount_total,
+        "total": total,
+        "advance_discount_rate": advance_rate,
+        "advance_days": advance_days,
+        "booking_days": booking_days,
+        "event_duration": event_duration,
+    }
+
+
+def compute_booking_amounts(
+    price,
+    tickets: int,
+    is_student: bool,
+    *,
+    booking_days: int = 1,
+    event_duration: int = 1,
+    event_date=None,
+    booked_at=None,
+):
+    breakdown = calculate_booking_breakdown(
+        price,
+        tickets,
+        is_student,
+        booking_days=booking_days,
+        event_duration=event_duration,
+        event_date=event_date,
+        booked_at=booked_at,
+    )
+    return breakdown["base_subtotal"], breakdown["discount_total"], breakdown["total"]
+
+
+def cancellation_charge_rate(days_before: int | None):
+    if days_before is None:
+        return Decimal("1.00")
+    if days_before >= 40:
+        return Decimal("0.00")
+    if 25 <= days_before < 40:
+        return Decimal("0.40")
+    return Decimal("1.00")
+
+
+def calculate_cancellation_charge(total_amount, event_date, cancelled_at=None):
+    cancelled_at = cancelled_at or current_datetime()
+    days_before = days_before_event(event_date, cancelled_at.date()) if event_date else None
+    charge_rate = cancellation_charge_rate(days_before)
+    total_amount = to_money(total_amount)
+    charge = (total_amount * charge_rate).quantize(Decimal("0.01"))
+    refund = (total_amount - charge).quantize(Decimal("0.01"))
+    if refund < 0:
+        refund = Decimal("0.00")
+    return {
+        "days_before": days_before,
+        "charge_rate": charge_rate,
+        "cancellation_charge": charge,
+        "refund_amount": refund,
+    }
 
 
 def is_safe_next_url(value: str) -> bool:
@@ -625,7 +846,7 @@ def fetch_venue_details(cursor, venue_id: int):
 
     cursor.execute(
         """
-        SELECT e.event_id, e.event_name, e.event_date, e.location, e.price,
+        SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.location, e.price,
                e.event_capacity, c.category_name
         FROM events e
         LEFT JOIN categories c ON e.category_id = c.category_id
@@ -637,7 +858,7 @@ def fetch_venue_details(cursor, venue_id: int):
         """,
         (venue_id,),
     )
-    events = cursor.fetchall()
+    events = [enrich_booking_event(event) for event in cursor.fetchall()]
     return venue, events
 
 
@@ -796,6 +1017,76 @@ def ensure_event_venue_foreign_key(cursor):
         ADD CONSTRAINT fk_events_venue
         FOREIGN KEY (venue_id) REFERENCES venues(venue_id) ON DELETE SET NULL
         """
+    )
+
+
+def create_waitlist_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_waitlist (
+            waitlist_id INT PRIMARY KEY AUTO_INCREMENT,
+            event_id INT NOT NULL,
+            user_id INT NOT NULL,
+            requested_tickets INT NOT NULL DEFAULT 1,
+            booking_days INT NOT NULL DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'Waiting',
+            offer_expires_at DATETIME NULL,
+            booking_id INT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NULL,
+            FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def ensure_waitlist_table(cursor):
+    if not table_exists(cursor, "event_waitlist"):
+        create_waitlist_table(cursor)
+        return
+
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "requested_tickets",
+        "INT NOT NULL DEFAULT 1 AFTER user_id",
+    )
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "booking_days",
+        "INT NOT NULL DEFAULT 1 AFTER requested_tickets",
+    )
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "status",
+        "VARCHAR(20) NOT NULL DEFAULT 'Waiting' AFTER booking_days",
+    )
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "offer_expires_at",
+        "DATETIME NULL AFTER status",
+    )
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "booking_id",
+        "INT NULL AFTER offer_expires_at",
+    )
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "created_at",
+        "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER booking_id",
+    )
+    add_column_if_missing(
+        cursor,
+        "event_waitlist",
+        "updated_at",
+        "DATETIME NULL AFTER created_at",
     )
 
 
@@ -1158,6 +1449,15 @@ def initialize_database():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        add_column_if_missing(cursor, "events", "location", "VARCHAR(255) NULL AFTER description")
+        add_column_if_missing(cursor, "events", "event_end_date", "DATE NULL AFTER event_date")
+        add_column_if_missing(cursor, "events", "conditions", "TEXT NULL AFTER event_end_date")
+        add_column_if_missing(
+            cursor,
+            "events",
+            "event_cost",
+            "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER event_capacity",
+        )
         add_column_if_missing(cursor, "users", "password_hash", "VARCHAR(255) NULL AFTER email")
         add_column_if_missing(
             cursor,
@@ -1180,6 +1480,54 @@ def initialize_database():
         add_column_if_missing(
             cursor,
             "bookings",
+            "waitlist_id",
+            "INT NULL AFTER event_id",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "contact_phone",
+            "VARCHAR(50) NULL AFTER waitlist_id",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "booking_days",
+            "INT NOT NULL DEFAULT 1 AFTER tickets",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "subtotal_amount",
+            "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER booking_days",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "student_discount_amount",
+            "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER subtotal_amount",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "advance_discount_amount",
+            "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER student_discount_amount",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "cancellation_charge",
+            "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER advance_discount_amount",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
+            "refund_amount",
+            "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER cancellation_charge",
+        )
+        add_column_if_missing(
+            cursor,
+            "bookings",
             "created_at",
             "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER status",
         )
@@ -1197,13 +1545,53 @@ def initialize_database():
         )
         ensure_venues_table(cursor)
         ensure_event_venue_foreign_key(cursor)
+        ensure_waitlist_table(cursor)
         ensure_contact_messages_table(cursor)
         ensure_reviews_table(cursor)
         ensure_newsletter_subscribers_table(cursor)
 
+        cursor.execute(
+            """
+            UPDATE events
+            SET event_end_date = event_date
+            WHERE event_end_date IS NULL AND event_date IS NOT NULL
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE events
+            SET event_cost = 0
+            WHERE event_cost IS NULL OR event_cost < 0
+            """
+        )
         cursor.execute("UPDATE users SET role=%s WHERE role IS NULL OR role=''", (ROLE_USER,))
         cursor.execute(
             "UPDATE bookings SET status='Confirmed' WHERE status IS NULL OR status=''"
+        )
+        cursor.execute(
+            """
+            UPDATE bookings
+            SET booking_days = 1
+            WHERE booking_days IS NULL OR booking_days < 1
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE bookings b
+            JOIN users u ON u.user_id = b.user_id
+            SET b.contact_phone = COALESCE(b.contact_phone, u.phone)
+            WHERE b.contact_phone IS NULL OR b.contact_phone = ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE bookings
+            SET subtotal_amount = COALESCE(subtotal_amount, 0),
+                student_discount_amount = COALESCE(student_discount_amount, 0),
+                advance_discount_amount = COALESCE(advance_discount_amount, 0),
+                cancellation_charge = COALESCE(cancellation_charge, 0),
+                refund_amount = COALESCE(refund_amount, 0)
+            """
         )
         cursor.execute("UPDATE contact_messages SET status='New' WHERE status IS NULL OR status=''")
         cursor.execute(
@@ -1452,12 +1840,15 @@ def fetch_booking_details(cursor, booking_id: int):
     booked_at_sql = booking_booked_at_sql()
     cursor.execute(
         f"""
-        SELECT b.booking_id, b.user_id, b.event_id, b.booking_date, b.created_at,
+        SELECT b.booking_id, b.user_id, b.event_id, b.waitlist_id, b.contact_phone, b.booking_date, b.created_at,
                {booked_at_sql} AS booked_at,
-               b.tickets, b.is_student, b.discount_applied,
+               b.tickets, b.booking_days, b.is_student,
+               b.subtotal_amount, b.student_discount_amount, b.advance_discount_amount,
+               b.discount_applied, b.cancellation_charge, b.refund_amount,
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email, u.phone, u.role,
-               e.event_name, e.event_date, e.location, e.price, e.event_capacity,
+               e.event_name, e.event_date, e.event_end_date, e.location, e.price, e.event_capacity,
+               e.conditions, e.event_cost,
                v.venue_name, v.address,
                c.category_name,
                p.payment_id, p.amount, p.payment_method, p.payment_source,
@@ -1540,10 +1931,12 @@ def fetch_booking_receipts(cursor, *, q="", limit=None, offset=None):
     cursor.execute(
         f"""
         SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at,
-               b.tickets, b.is_student, b.discount_applied,
+               b.tickets, b.booking_days, b.is_student,
+               b.subtotal_amount, b.student_discount_amount, b.advance_discount_amount,
+               b.discount_applied, b.cancellation_charge, b.refund_amount,
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email,
-               e.event_id, e.event_name, e.event_date,
+               e.event_id, e.event_name, e.event_date, e.event_end_date,
                p.amount, p.payment_method, p.payment_source, COALESCE(p.payment_status, 'Pending') AS payment_status
         FROM bookings b
         JOIN users u ON b.user_id = u.user_id
@@ -1558,12 +1951,263 @@ def fetch_booking_receipts(cursor, *, q="", limit=None, offset=None):
     return cursor.fetchall()
 
 
+def fetch_waitlist_entries(
+    cursor,
+    *,
+    waitlist_id=None,
+    user_id=None,
+    event_id=None,
+    status=None,
+    limit=None,
+    offset=None,
+    order_by=None,
+):
+    filters = []
+    params = []
+
+    if waitlist_id is not None:
+        filters.append("w.waitlist_id = %s")
+        params.append(waitlist_id)
+
+    if user_id is not None:
+        filters.append("w.user_id = %s")
+        params.append(user_id)
+
+    if event_id is not None:
+        filters.append("w.event_id = %s")
+        params.append(event_id)
+
+    if status:
+        filters.append("w.status = %s")
+        params.append(status)
+
+    where_clause = " AND ".join(filters) if filters else "1=1"
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = f" LIMIT {int(limit)}"
+        if offset is not None:
+            limit_clause += f" OFFSET {int(offset)}"
+
+    default_order = "CASE WHEN w.status = 'Offered' THEN 0 ELSE 1 END, w.created_at ASC, w.waitlist_id ASC"
+
+    cursor.execute(
+        f"""
+        SELECT w.waitlist_id, w.event_id, w.user_id, w.requested_tickets, w.booking_days,
+               w.status, w.offer_expires_at, w.booking_id, w.created_at, w.updated_at,
+               e.event_name, e.event_date, e.event_end_date, e.location, e.price,
+               v.venue_name, c.category_name,
+               u.full_name, u.email, u.phone
+        FROM event_waitlist w
+        JOIN events e ON w.event_id = e.event_id
+        JOIN users u ON w.user_id = u.user_id
+        LEFT JOIN venues v ON e.venue_id = v.venue_id
+        LEFT JOIN categories c ON e.category_id = c.category_id
+        WHERE {where_clause}
+        ORDER BY {order_by or default_order}
+        {limit_clause}
+        """,
+        tuple(params),
+    )
+    return cursor.fetchall()
+
+
+def fetch_waitlist_entry(cursor, waitlist_id: int):
+    rows = fetch_waitlist_entries(cursor, waitlist_id=waitlist_id, limit=1)
+    return rows[0] if rows else None
+
+
+def waitlist_offer_is_active(waitlist_entry) -> bool:
+    if not waitlist_entry:
+        return False
+    if (waitlist_entry.get("status") or "") != WAITLIST_STATUS_OFFERED:
+        return False
+    offer_expires_at = waitlist_entry.get("offer_expires_at")
+    if not offer_expires_at:
+        return True
+    return offer_expires_at >= current_datetime()
+
+
+def build_pending_booking_from_waitlist(waitlist_entry, event):
+    if not waitlist_entry or not event:
+        return None
+
+    booked_at = current_datetime()
+    pricing = calculate_booking_breakdown(
+        event.get("price"),
+        waitlist_entry.get("requested_tickets") or 1,
+        False,
+        booking_days=waitlist_entry.get("booking_days") or 1,
+        event_duration=event_duration_days(event),
+        event_date=event.get("event_date"),
+        booked_at=booked_at,
+    )
+
+    return {
+        "waitlist_id": waitlist_entry["waitlist_id"],
+        "event_id": int(event["event_id"]),
+        "return_url": url_for("my_bookings"),
+        "event_name": event.get("event_name") or "",
+        "event_date": event["event_date"].isoformat() if event.get("event_date") else "",
+        "event_end_date": event["event_end_date"].isoformat() if event.get("event_end_date") else "",
+        "event_date_label": event_date_range_label(event),
+        "venue_name": event.get("venue_name") or "",
+        "location": event.get("location") or "",
+        "price": str(to_money(event.get("price"))),
+        "tickets": int(waitlist_entry.get("requested_tickets") or 1),
+        "booking_days": int(waitlist_entry.get("booking_days") or 1),
+        "phone": (waitlist_entry.get("phone") or "").strip(),
+        "is_student": False,
+        "payment_method": "card",
+        "payment_method_label": payment_method_label("card"),
+        "booking_date": booked_at.isoformat(timespec="seconds"),
+        "subtotal": str(pricing["base_subtotal"]),
+        "student_discount": str(pricing["student_discount"]),
+        "advance_discount": str(pricing["advance_discount"]),
+        "discount": str(pricing["discount_total"]),
+        "total_amount": str(pricing["total"]),
+        "remaining_seats": event.get("remaining_seats"),
+        "max_tickets": booking_ticket_limit(event),
+        "event_duration_days": event_duration_days(event),
+        "event_cost": str(to_money(event.get("event_cost"))),
+    }
+
+
+def promote_waitlist_entries(cursor, conn, event_id: int):
+    seats_available = available_seats(cursor, event_id)
+    if seats_available is None or seats_available <= 0:
+        return []
+
+    cursor.execute(
+        """
+        SELECT waitlist_id, requested_tickets
+        FROM event_waitlist
+        WHERE event_id=%s AND status=%s
+        ORDER BY created_at ASC, waitlist_id ASC
+        """,
+        (event_id, WAITLIST_STATUS_WAITING),
+    )
+    waiting_rows = cursor.fetchall()
+    offered = []
+    now = current_datetime()
+
+    for row in waiting_rows:
+        requested_tickets = int(row.get("requested_tickets") or 1)
+        if requested_tickets > seats_available:
+            continue
+
+        cursor.execute(
+            """
+            UPDATE event_waitlist
+            SET status=%s,
+                offer_expires_at=%s,
+                updated_at=%s
+            WHERE waitlist_id=%s
+            """,
+            (
+                WAITLIST_STATUS_OFFERED,
+                now + timedelta(days=WAITLIST_OFFER_HOLD_DAYS),
+                now,
+                row["waitlist_id"],
+            ),
+        )
+        offered.append(row["waitlist_id"])
+        seats_available -= requested_tickets
+        if seats_available <= 0:
+            break
+
+    return offered
+
+
+def event_price_reduction_summary(cursor, event_id: int):
+    booked_at_sql = booking_booked_at_sql()
+    cursor.execute(
+        f"""
+        SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.price,
+               COUNT(b.booking_id) AS total_bookings,
+               COALESCE(
+                   SUM(
+                       CASE
+                           WHEN DATE({booked_at_sql}) >= DATE_SUB(COALESCE(e.event_date, CURDATE()), INTERVAL %s DAY)
+                           THEN 1 ELSE 0
+                       END
+                   ),
+                   0
+               ) AS recent_bookings
+        FROM events e
+        LEFT JOIN bookings b
+               ON b.event_id = e.event_id
+              AND COALESCE(b.status, 'Confirmed') <> 'Cancelled'
+        WHERE e.event_id = %s
+        GROUP BY e.event_id, e.event_name, e.event_date, e.event_end_date, e.price
+        """,
+        (EVENT_PRICE_REDUCTION_LOOKBACK_DAYS, event_id),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+
+    total_bookings = int(row.get("total_bookings") or 0)
+    recent_bookings = int(row.get("recent_bookings") or 0)
+    eligible = (
+        total_bookings > 0
+        and Decimal(recent_bookings) / Decimal(total_bookings) < EVENT_PRICE_REDUCTION_BOOKING_RATIO
+    )
+    current_price = to_money(row.get("price"))
+    reduced_price = (current_price * (Decimal("1.00") - EVENT_PRICE_REDUCTION_THRESHOLD)).quantize(
+        Decimal("0.01")
+    )
+
+    return {
+        "event_id": row["event_id"],
+        "event_name": row["event_name"],
+        "event_date": row["event_date"],
+        "event_end_date": row.get("event_end_date"),
+        "current_price": current_price,
+        "reduced_price": reduced_price,
+        "total_bookings": total_bookings,
+        "recent_bookings": recent_bookings,
+        "eligible": eligible,
+        "recent_ratio": (Decimal(recent_bookings) / Decimal(total_bookings)) if total_bookings else Decimal("0"),
+    }
+
+
 def can_access_booking(booking) -> bool:
     if not booking or not g.current_user:
         return False
     if g.current_user.get("role") == ROLE_ADMIN:
         return True
     return booking.get("user_id") == g.current_user.get("user_id")
+
+
+def booking_is_user_editable(booking) -> bool:
+    if not can_access_booking(booking):
+        return False
+    if (booking.get("status") or "").strip() == "Cancelled":
+        return False
+
+    event_date = booking.get("event_date")
+    if not event_date:
+        return False
+
+    return event_date >= current_date()
+
+
+def booking_edit_max_tickets(cursor, booking, booking_id: int):
+    seats_available = available_seats(cursor, booking["event_id"], exclude_booking_id=booking_id)
+    if seats_available is None:
+        return 10
+
+    try:
+        seats_available = int(seats_available)
+    except (TypeError, ValueError):
+        return booking.get("tickets") or 1
+
+    current_tickets = parse_positive_int(booking.get("tickets"), 1)
+    return max(current_tickets, min(10, seats_available))
+
+
+def booking_contact_phone_value(booking):
+    return (booking.get("contact_phone") or booking.get("phone") or "").strip()
 
 
 def payment_status_for_booking(status: str) -> str:
@@ -1590,7 +2234,15 @@ def view_events():
     return redirect(url_for("events"))
 
 
-def build_event_listing_filters(category="", q="", date_filter="", price_filter=""):
+def build_event_listing_filters(
+    category="",
+    q="",
+    date_filter="",
+    date_from="",
+    date_to="",
+    month="",
+    price_filter="",
+):
     price_filter = (price_filter or "").strip().lower()
     if price_filter not in {"", "free", "paid"}:
         price_filter = ""
@@ -1612,6 +2264,18 @@ def build_event_listing_filters(category="", q="", date_filter="", price_filter=
     if date_filter:
         filters.append("DATE(e.event_date) = %s")
         params.append(date_filter)
+    else:
+        if month:
+            filters.append("DATE_FORMAT(e.event_date, '%Y-%m') = %s")
+            params.append(month)
+
+        if date_from:
+            filters.append("DATE(e.event_date) >= %s")
+            params.append(date_from)
+
+        if date_to:
+            filters.append("DATE(e.event_date) <= %s")
+            params.append(date_to)
 
     if price_filter == "free":
         filters.append("(e.price IS NULL OR e.price = 0)")
@@ -1621,11 +2285,24 @@ def build_event_listing_filters(category="", q="", date_filter="", price_filter=
     return filters, params, price_filter
 
 
-def fetch_event_listing(category="", q="", date_filter="", price_filter="", limit=None, offset=None):
+def fetch_event_listing(
+    category="",
+    q="",
+    date_filter="",
+    date_from="",
+    date_to="",
+    month="",
+    price_filter="",
+    limit=None,
+    offset=None,
+):
     filters, params, price_filter = build_event_listing_filters(
         category=category,
         q=q,
         date_filter=date_filter,
+        date_from=date_from,
+        date_to=date_to,
+        month=month,
         price_filter=price_filter,
     )
     conn = get_db_connection()
@@ -1660,7 +2337,7 @@ def fetch_event_listing(category="", q="", date_filter="", price_filter="", limi
         tuple(params),
     )
 
-    events_rows = cursor.fetchall()
+    events_rows = [enrich_booking_event(event) for event in cursor.fetchall()]
 
     cursor.execute("SELECT * FROM categories ORDER BY category_name")
     categories = cursor.fetchall()
@@ -1671,11 +2348,22 @@ def fetch_event_listing(category="", q="", date_filter="", price_filter="", limi
     return events_rows, categories, price_filter
 
 
-def count_event_listing(category="", q="", date_filter="", price_filter=""):
+def count_event_listing(
+    category="",
+    q="",
+    date_filter="",
+    date_from="",
+    date_to="",
+    month="",
+    price_filter="",
+):
     filters, params, _ = build_event_listing_filters(
         category=category,
         q=q,
         date_filter=date_filter,
+        date_from=date_from,
+        date_to=date_to,
+        month=month,
         price_filter=price_filter,
     )
 
@@ -1720,12 +2408,25 @@ def enrich_booking_event(event):
         return None
 
     booking_event = dict(event)
-    booking_event["max_tickets"] = booking_ticket_limit(booking_event)
-    booking_event["event_date_label"] = (
-        booking_event["event_date"].strftime("%B %d, %Y")
-        if booking_event.get("event_date")
+    booking_event["event_duration_days"] = event_duration_days(booking_event)
+    booking_event["event_date_range_label"] = event_date_range_label(booking_event)
+    booking_event["booking_open_date"] = (
+        event_booking_open_date(booking_event).strftime("%B %d, %Y")
+        if event_booking_open_date(booking_event)
         else ""
     )
+    booking_event["booking_close_date"] = (
+        event_booking_close_date(booking_event).strftime("%B %d, %Y")
+        if event_booking_close_date(booking_event)
+        else ""
+    )
+    booking_event["is_bookable"] = is_event_bookable(booking_event, current_date())
+    booking_event["is_sold_out"] = (
+        booking_event.get("remaining_seats") is not None
+        and int(booking_event.get("remaining_seats") or 0) <= 0
+    )
+    booking_event["max_tickets"] = booking_ticket_limit(booking_event)
+    booking_event["event_date_label"] = booking_event["event_date_range_label"]
     booking_event["remaining_label"] = (
         "Unlimited"
         if booking_event.get("remaining_seats") is None
@@ -1744,6 +2445,9 @@ def fetch_bookable_events():
         if not event_date or event_date < today:
             continue
 
+        if not is_event_bookable(event, today):
+            continue
+
         remaining = event.get("remaining_seats")
         if remaining is not None:
             try:
@@ -1758,11 +2462,15 @@ def fetch_bookable_events():
     return bookable_events
 
 
-def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
+def process_booking_submission(cursor, conn, event, event_id, invalid_redirect, pending_booking=None):
     booked_at = current_datetime()
     today = booked_at.date()
     tickets = parse_ticket_count(request.form.get("tickets"))
-    phone = request.form.get("phone", "").strip()
+    booking_days = parse_booking_days(
+        request.form.get("booking_days"),
+        event_duration_days(event),
+    )
+    phone = request.form.get("phone", "").strip() or None
     is_student = "is_student" in request.form
     payment_method = request.form.get("payment_method", "card").strip().lower()
 
@@ -1770,12 +2478,16 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
         flash("Tickets must be between 1 and 10.", "error")
         return redirect(invalid_redirect)
 
+    if booking_days is None:
+        flash("Please choose a valid number of booking days.", "error")
+        return redirect(invalid_redirect)
+
     if payment_method not in PAYMENT_METHODS:
         flash("Please choose a valid payment method.", "error")
         return redirect(invalid_redirect)
 
-    if event.get("event_date") and event["event_date"] < today:
-        flash("You cannot book an event that has already taken place.", "error")
+    if not is_event_bookable(event, today):
+        flash("This event is not currently open for booking.", "error")
         return redirect(url_for("event_detail", event_id=event_id))
 
     remaining = event.get("remaining_seats")
@@ -1801,8 +2513,14 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
         )
         return redirect(url_for("my_bookings"))
 
-    _, discount, total_amount = compute_booking_amounts(
-        event.get("price"), tickets, is_student
+    pricing = calculate_booking_breakdown(
+        event.get("price"),
+        tickets,
+        is_student,
+        booking_days=booking_days,
+        event_duration=event_duration_days(event),
+        event_date=event.get("event_date"),
+        booked_at=booked_at,
     )
 
     try:
@@ -1818,18 +2536,27 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
         cursor.execute(
             """
             INSERT INTO bookings (
-                user_id, event_id, booking_date, tickets, is_student,
-                discount_applied, status, created_at
+                user_id, event_id, waitlist_id, contact_phone, booking_date, tickets, booking_days, is_student,
+                subtotal_amount, student_discount_amount, advance_discount_amount,
+                discount_applied, cancellation_charge, refund_amount, status, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 g.current_user["user_id"],
                 event_id,
+                pending_booking.get("waitlist_id") if pending_booking else None,
+                phone,
                 today,
                 tickets,
+                booking_days,
                 is_student,
-                discount,
+                pricing["base_subtotal"],
+                pricing["student_discount"],
+                pricing["advance_discount"],
+                pricing["discount_total"],
+                Decimal("0.00"),
+                Decimal("0.00"),
                 "Confirmed",
                 booked_at,
             ),
@@ -1843,7 +2570,7 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
             """,
             (
                 booking_id,
-                total_amount,
+                pricing["total"],
                 payment_method,
                 "Paid",
                 booked_at,
@@ -1863,6 +2590,8 @@ def prepare_payment_details_session(cursor, conn, event, event_id, invalid_redir
     booked_at = current_datetime()
     today = booked_at.date()
     tickets = parse_ticket_count(request.form.get("tickets"))
+    event_duration = event_duration_days(event)
+    booking_days = parse_booking_days(request.form.get("booking_days"), event_duration)
     phone = request.form.get("phone", "").strip()
     is_student = "is_student" in request.form
     payment_method = normalize_payment_method(request.form.get("payment_method"))
@@ -1871,12 +2600,20 @@ def prepare_payment_details_session(cursor, conn, event, event_id, invalid_redir
         flash("Tickets must be between 1 and 10.", "error")
         return redirect(invalid_redirect)
 
+    if booking_days is None:
+        flash("Please choose a valid number of booking days.", "error")
+        return redirect(invalid_redirect)
+
     if not payment_method:
         flash("Please choose a valid payment method.", "error")
         return redirect(invalid_redirect)
 
-    if event.get("event_date") and event["event_date"] < today:
-        flash("You cannot book an event that has already taken place.", "error")
+    if not is_event_bookable(event, today):
+        flash("This event is not currently open for booking.", "error")
+        return redirect(url_for("event_detail", event_id=event_id))
+
+    if event.get("remaining_seats") is not None and int(event["remaining_seats"]) <= 0:
+        flash("This event is fully booked. Join the waitlist instead.", "error")
         return redirect(url_for("event_detail", event_id=event_id))
 
     remaining = event.get("remaining_seats")
@@ -1902,8 +2639,14 @@ def prepare_payment_details_session(cursor, conn, event, event_id, invalid_redir
         )
         return redirect(url_for("my_bookings"))
 
-    subtotal, discount, total_amount = compute_booking_amounts(
-        event.get("price"), tickets, is_student
+    pricing = calculate_booking_breakdown(
+        event.get("price"),
+        tickets,
+        is_student,
+        booking_days=booking_days,
+        event_duration=event_duration,
+        event_date=event.get("event_date"),
+        booked_at=booked_at,
     )
 
     session[PENDING_BOOKING_SESSION_KEY] = {
@@ -1911,23 +2654,30 @@ def prepare_payment_details_session(cursor, conn, event, event_id, invalid_redir
         "return_url": invalid_redirect,
         "event_name": event.get("event_name") or "",
         "event_date": event["event_date"].isoformat() if event.get("event_date") else "",
-        "event_date_label": (
-            event["event_date"].strftime("%B %d, %Y") if event.get("event_date") else ""
-        ),
+        "event_end_date": event["event_end_date"].isoformat() if event.get("event_end_date") else "",
+        "event_date_label": event_date_range_label(event),
         "venue_name": event.get("venue_name") or "",
         "location": event.get("location") or "",
+        "conditions": event.get("conditions") or "",
         "price": str(to_money(event.get("price"))),
         "tickets": tickets,
+        "booking_days": booking_days,
         "phone": phone,
         "is_student": bool(is_student),
         "payment_method": payment_method,
         "payment_method_label": payment_method_label(payment_method),
         "booking_date": booked_at.isoformat(timespec="seconds"),
-        "subtotal": str(subtotal),
-        "discount": str(discount),
-        "total_amount": str(total_amount),
+        "subtotal": str(pricing["base_subtotal"]),
+        "student_discount": str(pricing["student_discount"]),
+        "advance_discount": str(pricing["advance_discount"]),
+        "discount": str(pricing["discount_total"]),
+        "total_amount": str(pricing["total"]),
+        "advance_discount_rate": str(pricing["advance_discount_rate"]),
+        "advance_days": pricing["advance_days"],
         "remaining_seats": event.get("remaining_seats"),
         "max_tickets": booking_ticket_limit(event),
+        "event_duration_days": event_duration,
+        "waitlist_id": None,
     }
 
     return redirect(url_for("payment_details"))
@@ -1936,8 +2686,9 @@ def prepare_payment_details_session(cursor, conn, event, event_id, invalid_redir
 def create_booking_from_pending(cursor, conn, pending_booking, payment_method, payment_source):
     event_id = int(pending_booking.get("event_id") or 0)
     tickets = parse_positive_int(pending_booking.get("tickets"), 1)
+    booking_days = parse_positive_int(pending_booking.get("booking_days"), 1)
     is_student = bool(pending_booking.get("is_student"))
-    phone = (pending_booking.get("phone") or "").strip()
+    phone = (pending_booking.get("phone") or "").strip() or None
     return_url = pending_booking.get("return_url") or url_for("book_tickets")
     booked_at = current_datetime()
     today = booked_at.date()
@@ -1947,8 +2698,8 @@ def create_booking_from_pending(cursor, conn, pending_booking, payment_method, p
         flash("The selected event could not be found. Please start again.", "error")
         return None, redirect(return_url)
 
-    if event.get("event_date") and event["event_date"] < today:
-        flash("You cannot book an event that has already taken place.", "error")
+    if not is_event_bookable(event, today):
+        flash("This event is not currently open for booking.", "error")
         return None, redirect(url_for("event_detail", event_id=event_id))
 
     remaining = event.get("remaining_seats")
@@ -1974,8 +2725,14 @@ def create_booking_from_pending(cursor, conn, pending_booking, payment_method, p
         )
         return None, redirect(url_for("my_bookings"))
 
-    subtotal, discount, total_amount = compute_booking_amounts(
-        event.get("price"), tickets, is_student
+    pricing = calculate_booking_breakdown(
+        event.get("price"),
+        tickets,
+        is_student,
+        booking_days=booking_days,
+        event_duration=event_duration_days(event),
+        event_date=event.get("event_date"),
+        booked_at=booked_at,
     )
 
     try:
@@ -1991,18 +2748,26 @@ def create_booking_from_pending(cursor, conn, pending_booking, payment_method, p
         cursor.execute(
             """
             INSERT INTO bookings (
-                user_id, event_id, booking_date, tickets, is_student,
-                discount_applied, status, created_at
+                user_id, event_id, contact_phone, booking_date, tickets, booking_days, is_student,
+                subtotal_amount, student_discount_amount, advance_discount_amount,
+                discount_applied, cancellation_charge, refund_amount, status, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 g.current_user["user_id"],
                 event_id,
+                phone,
                 today,
                 tickets,
+                booking_days,
                 is_student,
-                discount,
+                pricing["base_subtotal"],
+                pricing["student_discount"],
+                pricing["advance_discount"],
+                pricing["discount_total"],
+                Decimal("0.00"),
+                Decimal("0.00"),
                 "Confirmed",
                 booked_at,
             ),
@@ -2018,13 +2783,31 @@ def create_booking_from_pending(cursor, conn, pending_booking, payment_method, p
             """,
             (
                 booking_id,
-                total_amount,
+                pricing["total"],
                 payment_method,
                 payment_source,
                 "Paid",
                 booked_at,
             ),
         )
+
+        waitlist_id = pending_booking.get("waitlist_id")
+        if waitlist_id:
+            cursor.execute(
+                """
+                UPDATE event_waitlist
+                SET status=%s,
+                    booking_id=%s,
+                    updated_at=%s
+                WHERE waitlist_id=%s
+                """,
+                (
+                    WAITLIST_STATUS_CONVERTED,
+                    booking_id,
+                    booked_at,
+                    waitlist_id,
+                ),
+            )
 
         conn.commit()
         return booking_id, None
@@ -2082,7 +2865,8 @@ def admin_events():
 
     cursor.execute(
         f"""
-        SELECT e.event_id, e.event_name, e.event_date, e.location, e.price, e.event_capacity,
+        SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.location, e.price,
+               e.event_cost, e.event_capacity, e.conditions,
                v.venue_name, c.category_name,
                COALESCE(bt.booked_tickets, 0) AS booked_tickets,
                CASE
@@ -2120,13 +2904,56 @@ def admin_events():
 
 
 @admin_required
+def reduce_event_price(event_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    summary = event_price_reduction_summary(cursor, event_id)
+
+    if not summary:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if not summary["eligible"]:
+        cursor.close()
+        conn.close()
+        flash(
+            "This event does not currently meet the rule for a 25% price reduction.",
+            "error",
+        )
+        return redirect(url_for("admin_events"))
+
+    try:
+        cursor.execute(
+            "UPDATE events SET price=%s WHERE event_id=%s",
+            (summary["reduced_price"], event_id),
+        )
+        conn.commit()
+        flash(
+            f"Event price reduced from £{summary['current_price']:.2f} to £{summary['reduced_price']:.2f}.",
+            "success",
+        )
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for("admin_events"))
+
+
+@admin_required
 def add_event():
     event = {}
     if request.method == "POST":
         event_name = request.form.get("event_name", "").strip()
         location = request.form.get("location", "").strip()
         event_date = parse_event_date(request.form.get("event_date"))
+        event_end_date = parse_event_date(request.form.get("event_end_date"))
+        conditions = request.form.get("conditions", "").strip()
         price = parse_price(request.form.get("price"))
+        event_cost = parse_price(request.form.get("event_cost"))
         capacity_raw = request.form.get("event_capacity", "").strip()
         event_capacity = parse_capacity(capacity_raw)
         venue_id_raw = request.form.get("venue_id")
@@ -2143,7 +2970,10 @@ def add_event():
             "event_name": event_name,
             "location": location,
             "event_date": event_date,
+            "event_end_date": event_end_date or event_date,
+            "conditions": conditions,
             "price": price,
+            "event_cost": event_cost,
             "venue_id": venue_id,
             "category_id": category_id,
             "event_capacity": event_capacity,
@@ -2155,6 +2985,7 @@ def add_event():
             or event_date is None
             or not location
             or price is None
+            or event_cost is None
             or not venue_id
             or not category_id
         ):
@@ -2163,6 +2994,8 @@ def add_event():
             flash("Capacity must be a number between 1 and 10000.", "error")
         elif event_date < today:
             flash("Event date cannot be in the past.", "error")
+        elif event_end_date and event_end_date < event_date:
+            flash("Event end date cannot be before the start date.", "error")
         else:
             conn = get_db_connection()
             cursor = conn.cursor(dictionary=True)
@@ -2188,14 +3021,20 @@ def add_event():
                     else:
                         cursor.execute(
                             """
-                            INSERT INTO events (event_name, event_date, location, price, venue_id, category_id, event_capacity)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            INSERT INTO events (
+                                event_name, event_date, event_end_date, location, conditions, price,
+                                event_cost, venue_id, category_id, event_capacity
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 event_name,
                                 event_date,
+                                event_end_date or event_date,
                                 location,
+                                conditions or None,
                                 price,
+                                event_cost,
                                 venue_id,
                                 category_id,
                                 event_capacity,
@@ -2249,6 +3088,9 @@ def update_event(event_id):
         event_capacity = parse_capacity(capacity_raw)
         venue_id_raw = request.form.get("venue_id")
         category_id_raw = request.form.get("category_id")
+        event_end_date = parse_event_date(request.form.get("event_end_date"))
+        conditions = request.form.get("conditions", "").strip()
+        event_cost = parse_price(request.form.get("event_cost"))
 
         try:
             venue_id = int(venue_id_raw)
@@ -2263,6 +3105,7 @@ def update_event(event_id):
             or event_date is None
             or not location
             or price is None
+            or event_cost is None
             or not venue_id
             or not category_id
         ):
@@ -2271,6 +3114,8 @@ def update_event(event_id):
             flash("Capacity must be a number between 1 and 10000.", "error")
         elif event_date < today and event_date != event.get("event_date"):
             flash("Event date cannot be in the past.", "error")
+        elif event_end_date and event_end_date < event_date:
+            flash("Event end date cannot be before the start date.", "error")
         else:
             try:
                 if not venue_exists(cursor, venue_id) or not category_exists(
@@ -2295,14 +3140,18 @@ def update_event(event_id):
                         cursor.execute(
                             """
                             UPDATE events
-                            SET event_name=%s, event_date=%s, location=%s, price=%s, venue_id=%s, category_id=%s, event_capacity=%s
+                            SET event_name=%s, event_date=%s, event_end_date=%s, location=%s, conditions=%s,
+                                price=%s, event_cost=%s, venue_id=%s, category_id=%s, event_capacity=%s
                             WHERE event_id=%s
                             """,
                             (
                                 event_name,
                                 event_date,
+                                event_end_date or event_date,
                                 location,
+                                conditions or None,
                                 price,
+                                event_cost,
                                 venue_id,
                                 category_id,
                                 event_capacity,
@@ -2323,7 +3172,10 @@ def update_event(event_id):
                 "event_name": event_name,
                 "location": location,
                 "event_date": event_date,
+                "event_end_date": event_end_date or event_date,
+                "conditions": conditions,
                 "price": price,
+                "event_cost": event_cost,
                 "venue_id": venue_id,
                 "category_id": category_id,
                 "event_capacity": event_capacity,
@@ -2599,14 +3451,29 @@ def events():
     category = request.args.get("category", "").strip()
     q = request.args.get("q", "").strip()
     date_filter = request.args.get("date", "").strip()
+    date_from_raw = request.args.get("date_from", "").strip()
+    date_to_raw = request.args.get("date_to", "").strip()
+    month_raw = request.args.get("month", "").strip()
     price_filter = request.args.get("price", "").strip().lower()
     page = parse_positive_int(request.args.get("page"), 1)
     per_page = 6
+
+    date_from = parse_event_date(date_from_raw)
+    date_to = parse_event_date(date_to_raw)
+    month = ""
+    if month_raw:
+        if re.fullmatch(r"\d{4}-\d{2}", month_raw):
+            month = month_raw
+        else:
+            flash("Invalid month filter.", "error")
 
     total_events = count_event_listing(
         category=category,
         q=q,
         date_filter=date_filter,
+        date_from=date_from,
+        date_to=date_to,
+        month=month,
         price_filter=price_filter,
     )
     total_pages = max(1, (total_events + per_page - 1) // per_page)
@@ -2617,6 +3484,9 @@ def events():
         category=category,
         q=q,
         date_filter=date_filter,
+        date_from=date_from,
+        date_to=date_to,
+        month=month,
         price_filter=price_filter,
         limit=per_page,
         offset=offset,
@@ -2632,6 +3502,12 @@ def events():
         pagination_base_args["q"] = q
     if date_filter:
         pagination_base_args["date"] = date_filter
+    if date_from_raw and not date_filter:
+        pagination_base_args["date_from"] = date_from_raw
+    if date_to_raw and not date_filter:
+        pagination_base_args["date_to"] = date_to_raw
+    if month and not date_filter:
+        pagination_base_args["month"] = month
     if price_filter:
         pagination_base_args["price"] = price_filter
 
@@ -2661,6 +3537,9 @@ def events():
         q=q,
         category=category,
         date=date_filter,
+        date_from=date_from_raw,
+        date_to=date_to_raw,
+        month=month,
         price=price_filter,
         page=page,
         total_pages=total_pages,
@@ -2754,7 +3633,7 @@ def event_detail(event_id):
     if not event:
         return render_template("404.html"), 404
 
-    return render_template("event_details.html", event=event)
+    return render_template("event_details.html", event=enrich_booking_event(event))
 
 
 @login_required
@@ -2762,6 +3641,7 @@ def book(event_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     event = fetch_event(cursor, event_id)
+    booking_event = enrich_booking_event(event)
 
     if not event:
         cursor.close()
@@ -2772,7 +3652,7 @@ def book(event_id):
         response = prepare_payment_details_session(
             cursor,
             conn,
-            enrich_booking_event(event),
+            booking_event,
             event_id,
             url_for("book", event_id=event_id),
         )
@@ -2780,15 +3660,169 @@ def book(event_id):
         conn.close()
         return response
 
+    if booking_event and not booking_event["is_bookable"] and not booking_event["is_sold_out"]:
+        cursor.close()
+        conn.close()
+        flash("Bookings for this event are not open yet.", "error")
+        return redirect(url_for("event_detail", event_id=event_id))
+
     cursor.close()
     conn.close()
     return render_template(
         "booking.html",
-        event=enrich_booking_event(event),
+        event=booking_event,
         booking_events=[],
         today=current_date(),
         booking_now=current_datetime(),
     )
+
+
+@login_required
+def join_waitlist(event_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    event = fetch_event(cursor, event_id)
+    booking_event = enrich_booking_event(event)
+
+    if not event:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if request.method != "POST":
+        cursor.close()
+        conn.close()
+        return redirect(url_for("event_detail", event_id=event_id))
+
+    if not booking_event or not booking_event["is_sold_out"]:
+        cursor.close()
+        conn.close()
+        flash("This event is not full yet, so you can book it directly.", "error")
+        return redirect(url_for("event_detail", event_id=event_id))
+
+    tickets = parse_ticket_count(request.form.get("tickets")) or 1
+    booking_days = parse_booking_days(
+        request.form.get("booking_days"),
+        event_duration_days(event),
+    ) or 1
+
+    cursor.execute(
+        """
+        SELECT waitlist_id
+        FROM event_waitlist
+        WHERE event_id=%s
+          AND user_id=%s
+          AND status IN (%s, %s)
+        LIMIT 1
+        """,
+        (
+            event_id,
+            g.current_user["user_id"],
+            WAITLIST_STATUS_WAITING,
+            WAITLIST_STATUS_OFFERED,
+        ),
+    )
+    existing_waitlist = cursor.fetchone()
+    if existing_waitlist:
+        cursor.close()
+        conn.close()
+        flash("You already have an active waitlist request for this event.", "error")
+        return redirect(url_for("event_detail", event_id=event_id))
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO event_waitlist (
+                event_id, user_id, requested_tickets, booking_days, status, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event_id,
+                g.current_user["user_id"],
+                tickets,
+                booking_days,
+                WAITLIST_STATUS_WAITING,
+                current_datetime(),
+                current_datetime(),
+            ),
+        )
+        conn.commit()
+        flash("You have joined the waitlist. We'll offer the place when a seat opens up.", "success")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for("event_detail", event_id=event_id))
+
+
+@login_required
+def accept_waitlist_offer(waitlist_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    waitlist_entry = fetch_waitlist_entry(cursor, waitlist_id)
+
+    if not waitlist_entry:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if waitlist_entry.get("user_id") != g.current_user.get("user_id"):
+        cursor.close()
+        conn.close()
+        abort(403)
+
+    if not waitlist_offer_is_active(waitlist_entry):
+        cursor.execute(
+            """
+            UPDATE event_waitlist
+            SET status=%s,
+                updated_at=%s
+            WHERE waitlist_id=%s
+            """,
+            (WAITLIST_STATUS_EXPIRED, current_datetime(), waitlist_id),
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        flash("That waitlist offer has expired.", "error")
+        return redirect(url_for("account"))
+
+    event = fetch_event(cursor, waitlist_entry["event_id"])
+    if not event:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    requested_tickets = int(waitlist_entry.get("requested_tickets") or 1)
+    if event.get("remaining_seats") is not None and int(event["remaining_seats"]) < requested_tickets:
+        cursor.execute(
+            """
+            UPDATE event_waitlist
+            SET status=%s,
+                updated_at=%s
+            WHERE waitlist_id=%s
+            """,
+            (WAITLIST_STATUS_EXPIRED, current_datetime(), waitlist_id),
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        flash("The offered place is no longer available.", "error")
+        return redirect(url_for("event_detail", event_id=event["event_id"]))
+
+    pending_booking = build_pending_booking_from_waitlist(
+        waitlist_entry,
+        enrich_booking_event(event),
+    )
+    session[PENDING_BOOKING_SESSION_KEY] = pending_booking
+    cursor.close()
+    conn.close()
+    flash("Your waitlist offer is ready. Complete payment to confirm the booking.", "success")
+    return redirect(url_for("payment_details"))
 
 
 @login_required
@@ -2881,9 +3915,12 @@ def my_bookings():
     cursor.execute(
         f"""
         SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at,
-               b.tickets, b.is_student,
-               b.discount_applied, COALESCE(b.status, 'Confirmed') AS status,
-               e.event_id, e.event_name, e.event_date, e.location,
+               b.tickets, b.booking_days, b.is_student,
+               b.contact_phone,
+               b.subtotal_amount, b.student_discount_amount, b.advance_discount_amount,
+               b.discount_applied, b.cancellation_charge, b.refund_amount,
+               COALESCE(b.status, 'Confirmed') AS status,
+               e.event_id, e.event_name, e.event_date, e.event_end_date, e.location,
                p.amount, p.payment_method, p.payment_source, COALESCE(p.payment_status, 'Pending') AS payment_status,
                p.payment_date
         FROM bookings b
@@ -2897,6 +3934,7 @@ def my_bookings():
     bookings = cursor.fetchall()
     for booking in bookings:
         booking["receipt_reference"] = booking_receipt_reference(booking["booking_id"])
+        booking["can_edit"] = booking_is_user_editable(booking)
     cursor.close()
     conn.close()
     return render_template("my_bookings.html", bookings=bookings)
@@ -2992,6 +4030,11 @@ def account():
         user_id=account_user["user_id"],
         order_by="r.created_at DESC, r.review_id DESC",
     )
+    waitlist_entries = fetch_waitlist_entries(
+        cursor,
+        user_id=account_user["user_id"],
+        order_by="w.created_at DESC, w.waitlist_id DESC",
+    )
 
     cursor.close()
     conn.close()
@@ -3001,6 +4044,8 @@ def account():
         account_user=account_user,
         contact_messages=contact_messages,
         user_reviews=user_reviews,
+        waitlist_entries=waitlist_entries,
+        now=current_datetime(),
     )
 
 
@@ -3153,6 +4198,8 @@ def booking_receipt(booking_id):
     if not can_access_booking(booking):
         abort(403)
 
+    booking["can_edit"] = booking_is_user_editable(booking)
+
     return render_template(
         "booking_receipt.html",
         booking=booking,
@@ -3198,41 +4245,61 @@ def describe_refund_account(booking):
 
 
 def refund_status_context(booking, outcome=""):
-    refund_allowed, refund_deadline = refund_is_allowed(booking.get("event_date"))
-    refund_deadline_label = (
-        refund_deadline.strftime("%B %d, %Y") if refund_deadline else ""
+    free_cancellation_deadline = refund_deadline_for_event(booking.get("event_date"))
+    free_cancellation_deadline_label = (
+        free_cancellation_deadline.strftime("%B %d, %Y") if free_cancellation_deadline else ""
     )
 
+    preview = calculate_cancellation_charge(
+        booking.get("amount") or booking.get("payment_amount") or 0,
+        booking.get("event_date"),
+    )
+    if (booking.get("status") or "").strip() == "Cancelled":
+        cancellation_charge = to_money(booking.get("cancellation_charge"))
+        refund_amount = to_money(booking.get("refund_amount"))
+    else:
+        cancellation_charge = preview["cancellation_charge"]
+        refund_amount = preview["refund_amount"]
+
+    refund_allowed, _ = refund_is_allowed(booking.get("event_date"))
     refund_heading = ""
     refund_message = ""
-    if outcome == "approved":
-        refund_heading = "Refund approved"
-        refund_message = (
-            f"Your booking has been cancelled. The refund will be processed within "
-            f"{REFUND_PROCESSING_WORKING_DAYS} working days."
-        )
-    elif outcome == "not_allowed":
-        refund_heading = "Refund not allowed"
-        if refund_deadline_label:
+
+    if outcome == "cancelled":
+        refund_heading = "Booking cancelled"
+        if refund_amount > 0:
             refund_message = (
-                f"Refunds are available until {refund_deadline_label} for this event. "
-                f"This booking is now outside the 3-day refund window."
+                f"Cancellation charge: £{cancellation_charge:.2f}. "
+                f"Refund amount: £{refund_amount:.2f}. "
+                f"The refund will be processed within {REFUND_PROCESSING_WORKING_DAYS} working days."
             )
         else:
-            refund_message = "This booking is outside the 3-day refund window."
+            refund_message = (
+                f"Cancellation charge: £{cancellation_charge:.2f}. "
+                "No refund is due for this booking."
+            )
     elif outcome == "already_cancelled":
         refund_heading = "Booking already cancelled"
         refund_message = "This booking was already cancelled before this refund check."
+    else:
+        refund_heading = "Cancellation policy"
+        refund_message = (
+            "Cancellations made 40 or more days before the event are free. "
+            "Cancellations between 25 and 39 days before the event incur a 40% charge. "
+            "Cancellations within 25 days of the event incur a 100% charge."
+        )
 
     return {
         "refund_allowed": refund_allowed,
-        "refund_deadline": refund_deadline,
-        "refund_deadline_label": refund_deadline_label,
+        "refund_deadline": free_cancellation_deadline,
+        "refund_deadline_label": free_cancellation_deadline_label,
         "refund_heading": refund_heading,
         "refund_message": refund_message,
         "refund_account": describe_refund_account(booking),
         "refund_processing_days": REFUND_PROCESSING_WORKING_DAYS,
         "refund_window_hours": REFUND_WINDOW_HOURS,
+        "cancellation_charge": cancellation_charge,
+        "refund_amount": refund_amount,
     }
 
 
@@ -3242,7 +4309,11 @@ def refund_policy():
         booking=None,
         refund_outcome="",
         refund_heading="Refund Policy",
-        refund_message="Refunds are available up to 3 days before the event and are processed within 2 working days.",
+        refund_message=(
+            "Cancellations made 40 or more days before the event are free. "
+            "Between 25 and 39 days before the event, a 40% charge applies. "
+            "Within 25 days, the cancellation charge is 100% of the booking price."
+        ),
         refund_deadline=None,
         refund_deadline_label="",
         refund_account="",
@@ -3269,17 +4340,24 @@ def booking_refund(booking_id):
 
     if not outcome:
         booking_status = (booking.get("status") or "").strip()
-        payment_status = (booking.get("payment_status") or "").strip().lower()
-        if booking_status == "Cancelled" and payment_status.startswith("refund"):
-            outcome = "approved"
-        elif booking_status == "Cancelled":
-            outcome = "already_cancelled"
+        if booking_status == "Cancelled":
+            outcome = "cancelled"
+        else:
+            free_cancellation_deadline = refund_deadline_for_event(booking.get("event_date"))
+            if free_cancellation_deadline and current_date() > free_cancellation_deadline:
+                outcome = "policy"
+            elif free_cancellation_deadline:
+                outcome = "policy"
+            else:
+                outcome = "policy"
 
     context = refund_status_context(booking, outcome)
     if not context["refund_heading"]:
         context["refund_heading"] = "Refund Policy"
         context["refund_message"] = (
-            "Refunds are allowed up to 3 days before the event and are processed within 2 working days."
+            "Cancellations made 40 or more days before the event are free. "
+            "Between 25 and 39 days before the event, a 40% charge applies. "
+            "Within 25 days, the cancellation charge is 100% of the booking price."
         )
 
     return render_template(
@@ -3313,19 +4391,30 @@ def cancel_booking(booking_id):
         return redirect(url_for("booking_refund", booking_id=booking_id, outcome="already_cancelled"))
 
     try:
-        refund_allowed, _refund_deadline = refund_is_allowed(booking.get("event_date"))
-        if not refund_allowed:
-            flash(
-                "Refund not allowed. Cancellations must be made at least 3 days before the event.",
-                "error",
-            )
-            cursor.close()
-            conn.close()
-            return redirect(url_for("booking_refund", booking_id=booking_id, outcome="not_allowed"))
+        cancellation = calculate_cancellation_charge(
+            booking.get("amount") or 0,
+            booking.get("event_date"),
+        )
+        cancellation_charge = cancellation["cancellation_charge"]
+        refund_amount = cancellation["refund_amount"]
+        payment_status = (
+            "Refund Approved" if refund_amount > 0 else "Cancellation Charge Applied"
+        )
 
         cursor.execute(
-            "UPDATE bookings SET status=%s WHERE booking_id=%s",
-            ("Cancelled", booking_id),
+            """
+            UPDATE bookings
+            SET status=%s,
+                cancellation_charge=%s,
+                refund_amount=%s
+            WHERE booking_id=%s
+            """,
+            (
+                "Cancelled",
+                cancellation_charge,
+                refund_amount,
+                booking_id,
+            ),
         )
         cursor.execute(
             """
@@ -3333,13 +4422,23 @@ def cancel_booking(booking_id):
             SET payment_status=%s
             WHERE booking_id=%s
             """,
-            ("Refund Approved", booking_id),
+            (payment_status, booking_id),
         )
+        promote_waitlist_entries(cursor, conn, booking["event_id"])
         conn.commit()
-        flash("Refund approved. Your booking has been cancelled.", "success")
+        if refund_amount > 0:
+            flash(
+                f"Booking cancelled. £{cancellation_charge:.2f} cancellation charge applied and £{refund_amount:.2f} will be refunded.",
+                "success",
+            )
+        else:
+            flash(
+                f"Booking cancelled. The full booking amount is retained as a cancellation charge.",
+                "success",
+            )
         cursor.close()
         conn.close()
-        return redirect(url_for("booking_refund", booking_id=booking_id, outcome="approved"))
+        return redirect(url_for("booking_refund", booking_id=booking_id, outcome="cancelled"))
     except mysql.connector.Error as err:
         conn.rollback()
         flash(f"Database error: {err}", "error")
@@ -3434,6 +4533,278 @@ def admin_dashboard():
         pending_reviews_count=pending_reviews_count,
         approved_reviews_count=approved_reviews_count,
         recent_reviews=recent_reviews,
+    )
+
+
+@admin_required
+def admin_reports():
+    event_id_raw = request.args.get("event_id", "").strip()
+    venue_id_raw = request.args.get("venue_id", "").strip()
+    year_raw = request.args.get("year", "").strip()
+    chart_period_raw = request.args.get("chart_period", "").strip().lower()
+
+    current_year = current_date().year
+    try:
+        selected_year = int(year_raw) if year_raw else current_year
+    except (TypeError, ValueError):
+        selected_year = current_year
+        year_raw = str(current_year)
+
+    if chart_period_raw not in {"weekly", "monthly", "yearly"}:
+        chart_period_raw = "yearly"
+
+    today = current_date()
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    month_start = today.replace(day=1)
+    next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+    month_end = next_month_start - timedelta(days=1)
+
+    year_start = today.replace(year=selected_year, month=1, day=1)
+    year_end = today.replace(year=selected_year, month=12, day=31)
+
+    period_config = {
+        "weekly": {
+            "title": "Weekly Event Mix",
+            "note": f"Events between {week_start.strftime('%b %d, %Y')} and {week_end.strftime('%b %d, %Y')}.",
+            "start_date": week_start,
+            "end_date": week_end,
+        },
+        "monthly": {
+            "title": "Monthly Event Mix",
+            "note": f"Events between {month_start.strftime('%b %d, %Y')} and {month_end.strftime('%b %d, %Y')}.",
+            "start_date": month_start,
+            "end_date": month_end,
+        },
+        "yearly": {
+            "title": f"Yearly Event Mix - {selected_year}",
+            "note": f"Events in {selected_year}.",
+            "start_date": year_start,
+            "end_date": year_end,
+        },
+    }
+    selected_chart_period = chart_period_raw
+    chart_period = period_config[selected_chart_period]
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT event_id, event_name, event_date, event_end_date, price
+        FROM events
+        ORDER BY event_date DESC, event_name ASC
+        """
+    )
+    report_events = cursor.fetchall()
+
+    cursor.execute(
+        """
+        SELECT venue_id, venue_name, city, capacity
+        FROM venues
+        ORDER BY venue_name ASC
+        """
+    )
+    report_venues = cursor.fetchall()
+
+    event_report = None
+    venue_report = None
+    year_report = None
+
+    if event_id_raw:
+        try:
+            event_id = int(event_id_raw)
+        except (TypeError, ValueError):
+            event_id = None
+        if event_id:
+            cursor.execute(
+                """
+                SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.price,
+                       e.event_cost, e.event_capacity, v.venue_name, c.category_name,
+                       COALESCE(bt.booked_tickets, 0) AS booked_tickets,
+                       CASE
+                            WHEN e.event_capacity IS NULL THEN NULL
+                            ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
+                       END AS remaining_seats
+                FROM events e
+                LEFT JOIN venues v ON e.venue_id = v.venue_id
+                LEFT JOIN categories c ON e.category_id = c.category_id
+                LEFT JOIN (
+                    SELECT event_id, SUM(tickets) AS booked_tickets
+                    FROM bookings
+                    WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                    GROUP BY event_id
+                ) bt ON e.event_id = bt.event_id
+                WHERE e.event_id = %s
+                """,
+                (event_id,),
+            )
+            event_report = cursor.fetchone()
+            if event_report:
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS bookings_count,
+                        COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN b.tickets ELSE 0 END), 0) AS tickets_sold,
+                        COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN p.amount ELSE 0 END), 0) AS revenue_total,
+                        COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') = 'Cancelled' THEN 1 ELSE 0 END), 0) AS cancelled_bookings
+                    FROM bookings b
+                    LEFT JOIN payments p ON p.booking_id = b.booking_id
+                    WHERE b.event_id = %s
+                    """,
+                    (event_id,),
+                )
+                event_stats = cursor.fetchone() or {}
+                event_report.update(event_stats)
+                event_report["remaining_seats"] = available_seats(cursor, event_id)
+                event_report["profit_total"] = (
+                    to_money(event_report.get("revenue_total")) - to_money(event_report.get("event_cost"))
+                )
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS waitlist_count
+                    FROM event_waitlist
+                    WHERE event_id=%s
+                      AND status IN (%s, %s)
+                    """,
+                    (event_id, WAITLIST_STATUS_WAITING, WAITLIST_STATUS_OFFERED),
+                )
+                event_report["waitlist_count"] = cursor.fetchone()["waitlist_count"] or 0
+
+    if venue_id_raw:
+        try:
+            venue_id = int(venue_id_raw)
+        except (TypeError, ValueError):
+            venue_id = None
+        if venue_id:
+            cursor.execute(
+                """
+                SELECT v.venue_id, v.venue_name, v.address, v.city, v.capacity,
+                       COALESCE(stats.total_events, 0) AS total_events,
+                       COALESCE(stats.upcoming_events, 0) AS upcoming_events,
+                       COALESCE(stats.fully_booked_events, 0) AS fully_booked_events,
+                       COALESCE(stats.revenue_total, 0) AS revenue_total
+                FROM venues v
+                LEFT JOIN (
+                    SELECT e.venue_id,
+                           COUNT(DISTINCT e.event_id) AS total_events,
+                           SUM(CASE WHEN e.event_date >= CURDATE() THEN 1 ELSE 0 END) AS upcoming_events,
+                           SUM(
+                               CASE
+                                   WHEN e.event_capacity IS NOT NULL
+                                        AND COALESCE(bt.booked_tickets, 0) >= e.event_capacity
+                                   THEN 1 ELSE 0
+                               END
+                           ) AS fully_booked_events,
+                           COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN p.amount ELSE 0 END), 0) AS revenue_total
+                    FROM events e
+                    LEFT JOIN (
+                        SELECT event_id, SUM(tickets) AS booked_tickets
+                        FROM bookings
+                        WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                        GROUP BY event_id
+                    ) bt ON e.event_id = bt.event_id
+                    LEFT JOIN bookings b ON b.event_id = e.event_id
+                    LEFT JOIN payments p ON p.booking_id = b.booking_id
+                    GROUP BY e.venue_id
+                ) stats ON v.venue_id = stats.venue_id
+                WHERE v.venue_id = %s
+                """,
+                (venue_id,),
+            )
+            venue_report = cursor.fetchone()
+            if venue_report:
+                cursor.execute(
+                    """
+                    SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.price,
+                           COALESCE(bt.booked_tickets, 0) AS booked_tickets,
+                           CASE
+                                WHEN e.event_capacity IS NULL THEN NULL
+                                ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
+                           END AS remaining_seats
+                    FROM events e
+                    LEFT JOIN (
+                        SELECT event_id, SUM(tickets) AS booked_tickets
+                        FROM bookings
+                        WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                        GROUP BY event_id
+                    ) bt ON e.event_id = bt.event_id
+                    WHERE e.venue_id = %s
+                    ORDER BY e.event_date ASC, e.event_name ASC
+                    """,
+                    (venue_id,),
+                )
+                venue_report["events"] = [enrich_booking_event(event) for event in cursor.fetchall()]
+
+    cursor.execute(
+        """
+        SELECT
+            COUNT(DISTINCT CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN e.event_id END) AS successful_events_count,
+            COUNT(DISTINCT e.event_id) AS total_events_in_year,
+            COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN p.amount ELSE 0 END), 0) AS revenue_total,
+            COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN b.tickets ELSE 0 END), 0) AS tickets_sold
+        FROM events e
+        LEFT JOIN bookings b ON b.event_id = e.event_id
+        LEFT JOIN payments p ON p.booking_id = b.booking_id
+        WHERE YEAR(e.event_date) = %s
+        """,
+        (selected_year,),
+    )
+    year_report = cursor.fetchone() or {}
+    year_report["selected_year"] = selected_year
+    year_report["fully_booked_events_count"] = 0
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM events e
+        LEFT JOIN (
+            SELECT event_id, SUM(tickets) AS booked_tickets
+            FROM bookings
+            WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+            GROUP BY event_id
+        ) bt ON e.event_id = bt.event_id
+        WHERE YEAR(e.event_date) = %s
+          AND e.event_capacity IS NOT NULL
+          AND COALESCE(bt.booked_tickets, 0) >= e.event_capacity
+        """,
+        (selected_year,),
+    )
+    year_report["fully_booked_events_count"] = cursor.fetchone()["count"] or 0
+    event_mix_counts = fetch_event_mix_counts(
+        cursor,
+        chart_period["start_date"],
+        chart_period["end_date"],
+    )
+    year_report["event_mix_period_key"] = selected_chart_period
+    year_report["event_mix_title"] = chart_period["title"]
+    year_report["event_mix_note"] = chart_period["note"]
+    year_report["event_mix_labels"] = [
+        "Active booked events",
+        "Cancelled-only events",
+        "No booking events",
+    ]
+    year_report["event_mix_values"] = [
+        event_mix_counts.get("active_booked_events_count") or 0,
+        event_mix_counts.get("cancelled_only_events_count") or 0,
+        event_mix_counts.get("no_booking_events_count") or 0,
+    ]
+    year_report["event_mix_colors"] = ["#1a5276", "#e74c3c", "#f39c12"]
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/reports.html",
+        report_events=report_events,
+        report_venues=report_venues,
+        event_report=event_report,
+        venue_report=venue_report,
+        year_report=year_report,
+        selected_event_id=event_id_raw,
+        selected_venue_id=venue_id_raw,
+        selected_year=selected_year,
+        selected_chart_period=selected_chart_period,
     )
 
 
@@ -3686,10 +5057,12 @@ def admin_bookings():
     cursor.execute(
         f"""
         SELECT b.booking_id, b.booking_date, b.created_at, {booked_at_sql} AS booked_at,
-               b.tickets, b.is_student, b.discount_applied,
+               b.tickets, b.booking_days, b.is_student,
+               b.subtotal_amount, b.student_discount_amount, b.advance_discount_amount,
+               b.discount_applied, b.cancellation_charge, b.refund_amount,
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email,
-               e.event_id, e.event_name, e.event_date,
+               e.event_id, e.event_name, e.event_date, e.event_end_date,
                p.amount, p.payment_method, COALESCE(p.payment_status, 'Pending') AS payment_status
         FROM bookings b
         JOIN users u ON b.user_id = u.user_id
@@ -3781,6 +5154,159 @@ def admin_receipts():
     )
 
 
+@login_required
+def user_edit_booking(booking_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    booking = fetch_booking_details(cursor, booking_id)
+
+    if not booking:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if not can_access_booking(booking):
+        cursor.close()
+        conn.close()
+        abort(403)
+
+    if (booking.get("status") or "").strip() == "Cancelled":
+        cursor.close()
+        conn.close()
+        flash("Cancelled bookings cannot be edited.", "error")
+        return redirect(url_for("my_bookings"))
+
+    event_date = booking.get("event_date")
+    if not event_date:
+        cursor.close()
+        conn.close()
+        flash("This booking does not have a valid event date, so it cannot be edited.", "error")
+        return redirect(url_for("my_bookings"))
+
+    if event_date < current_date():
+        cursor.close()
+        conn.close()
+        flash(
+            "This booking cannot be edited because the event date "
+            f"({event_date.strftime('%B %d, %Y')}) has already passed. Today is {current_date().strftime('%B %d, %Y')}.",
+            "error",
+        )
+        return redirect(url_for("my_bookings"))
+
+    max_tickets = booking_edit_max_tickets(cursor, booking, booking_id)
+    booking["can_edit"] = True
+    booking["max_tickets"] = max_tickets
+    booking["contact_phone"] = booking_contact_phone_value(booking)
+    booking["remaining_for_update"] = available_seats(cursor, booking["event_id"], exclude_booking_id=booking_id)
+
+    if request.method == "POST":
+        tickets = parse_ticket_count(request.form.get("tickets"))
+        is_student = "is_student" in request.form
+        contact_phone = (request.form.get("contact_phone") or "").strip() or None
+        now = current_datetime()
+
+        if tickets is None:
+            cursor.close()
+            conn.close()
+            flash("Tickets must be between 1 and 10.", "error")
+            return redirect(url_for("edit_booking", booking_id=booking_id))
+
+        if contact_phone and len(contact_phone) > 50:
+            cursor.close()
+            conn.close()
+            flash("Contact phone must be 50 characters or fewer.", "error")
+            return redirect(url_for("edit_booking", booking_id=booking_id))
+
+        if tickets > max_tickets:
+            cursor.close()
+            conn.close()
+            flash(f"Only {max_tickets} ticket(s) are available for this update.", "error")
+            return redirect(url_for("edit_booking", booking_id=booking_id))
+
+        pricing = calculate_booking_breakdown(
+            booking.get("price"),
+            tickets,
+            is_student,
+            booking_days=booking.get("booking_days") or 1,
+            event_duration=event_duration_days(booking),
+            event_date=booking.get("event_date"),
+            booked_at=now,
+        )
+
+        try:
+            cursor.execute(
+                """
+                UPDATE bookings
+                SET tickets=%s,
+                    is_student=%s,
+                    contact_phone=%s,
+                    subtotal_amount=%s,
+                    student_discount_amount=%s,
+                    advance_discount_amount=%s,
+                    discount_applied=%s
+                WHERE booking_id=%s
+                """,
+                (
+                    tickets,
+                    is_student,
+                    contact_phone,
+                    pricing["base_subtotal"],
+                    pricing["student_discount"],
+                    pricing["advance_discount"],
+                    pricing["discount_total"],
+                    booking_id,
+                ),
+            )
+
+            if booking.get("payment_id"):
+                cursor.execute(
+                    """
+                    UPDATE payments
+                    SET amount=%s,
+                        payment_status=%s,
+                        payment_date=%s
+                    WHERE booking_id=%s
+                    """,
+                    (
+                        pricing["total"],
+                        payment_status_for_booking("Confirmed"),
+                        now,
+                        booking_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO payments (booking_id, amount, payment_method, payment_status, payment_date)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        booking_id,
+                        pricing["total"],
+                        booking.get("payment_method") or "card",
+                        payment_status_for_booking("Confirmed"),
+                        now,
+                    ),
+                )
+
+            conn.commit()
+            flash("Your booking has been updated successfully.", "success")
+            cursor.close()
+            conn.close()
+            return redirect(url_for("booking_receipt", booking_id=booking_id))
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f"Database error: {err}", "error")
+
+    cursor.close()
+    conn.close()
+    return render_template(
+        "edit_booking.html",
+        booking=booking,
+        max_tickets=max_tickets,
+    )
+
+
 @admin_required
 def admin_edit_booking(booking_id):
     conn = get_db_connection()
@@ -3788,6 +5314,7 @@ def admin_edit_booking(booking_id):
 
     if request.method == "POST":
         tickets = parse_ticket_count(request.form.get("tickets"))
+        booking_days = None
         is_student = "is_student" in request.form
         status = request.form.get("status", "Confirmed").strip()
 
@@ -3809,6 +5336,13 @@ def admin_edit_booking(booking_id):
             conn.close()
             return render_template("404.html"), 404
 
+        booking_days = parse_booking_days(
+            request.form.get("booking_days"),
+            event_duration_days(booking),
+        )
+        if booking_days is None:
+            booking_days = parse_positive_int(booking.get("booking_days"), 1)
+
         if status != "Cancelled":
             remaining = available_seats(cursor, booking["event_id"], exclude_booking_id=booking_id)
             if remaining is not None and tickets > remaining:
@@ -3817,20 +5351,61 @@ def admin_edit_booking(booking_id):
                 flash(f"Only {remaining} seat(s) are available for this event.", "error")
                 return redirect(url_for("admin_edit_booking", booking_id=booking_id))
 
-        _, discount, total_amount = compute_booking_amounts(
-            booking.get("price"), tickets, is_student
+        pricing = calculate_booking_breakdown(
+            booking.get("price"),
+            tickets,
+            is_student,
+            booking_days=booking_days,
+            event_duration=event_duration_days(booking),
+            event_date=booking.get("event_date"),
+            booked_at=current_datetime(),
         )
+        now = current_datetime()
+        cancellation_charge = Decimal("0.00")
+        refund_amount = Decimal("0.00")
         payment_status = payment_status_for_booking(status)
 
+        if status == "Cancelled":
+            cancellation_preview = calculate_cancellation_charge(
+                pricing["total"],
+                booking.get("event_date"),
+                now,
+            )
+            cancellation_charge = cancellation_preview["cancellation_charge"]
+            refund_amount = cancellation_preview["refund_amount"]
+            payment_status = (
+                "Refund Approved" if refund_amount > 0 else "Cancellation Charge Applied"
+            )
+
         try:
-            now = current_datetime()
             cursor.execute(
                 """
                 UPDATE bookings
-                SET tickets=%s, is_student=%s, discount_applied=%s, status=%s
+                SET tickets=%s,
+                    booking_days=%s,
+                    is_student=%s,
+                    subtotal_amount=%s,
+                    student_discount_amount=%s,
+                    advance_discount_amount=%s,
+                    discount_applied=%s,
+                    cancellation_charge=%s,
+                    refund_amount=%s,
+                    status=%s
                 WHERE booking_id=%s
                 """,
-                (tickets, is_student, discount, status, booking_id),
+                (
+                    tickets,
+                    booking_days,
+                    is_student,
+                    pricing["base_subtotal"],
+                    pricing["student_discount"],
+                    pricing["advance_discount"],
+                    pricing["discount_total"],
+                    cancellation_charge,
+                    refund_amount,
+                    status,
+                    booking_id,
+                ),
             )
 
             if booking.get("payment_id"):
@@ -3840,7 +5415,7 @@ def admin_edit_booking(booking_id):
                     SET amount=%s, payment_status=%s, payment_date=%s
                     WHERE booking_id=%s
                     """,
-                    (total_amount, payment_status, now, booking_id),
+                    (pricing["total"], payment_status, now, booking_id),
                 )
             else:
                 cursor.execute(
@@ -3850,12 +5425,15 @@ def admin_edit_booking(booking_id):
                     """,
                     (
                         booking_id,
-                        total_amount,
+                        pricing["total"],
                         "card",
                         payment_status,
                         now,
                     ),
                 )
+
+            if status == "Cancelled":
+                promote_waitlist_entries(cursor, conn, booking["event_id"])
 
             conn.commit()
             flash("Booking updated successfully.", "success")
@@ -3895,10 +5473,14 @@ def admin_edit_booking(booking_id):
 @admin_required
 def admin_delete_booking(booking_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
     try:
+        cursor.execute("SELECT event_id FROM bookings WHERE booking_id=%s", (booking_id,))
+        booking = cursor.fetchone()
         cursor.execute("DELETE FROM payments WHERE booking_id = %s", (booking_id,))
         cursor.execute("DELETE FROM bookings WHERE booking_id = %s", (booking_id,))
+        if booking:
+            promote_waitlist_entries(cursor, conn, booking["event_id"])
         conn.commit()
         flash("Booking deleted.", "success")
     except mysql.connector.Error as err:
@@ -3945,6 +5527,57 @@ def admin_users():
     conn.close()
 
     return render_template("admin/users.html", users=users_rows, q=q)
+
+
+@admin_required
+def admin_reset_user_password(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        """
+        SELECT user_id, full_name, email, role
+        FROM users
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if request.method == "POST":
+        new_password = request.form.get("new_password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if len(new_password) < 8:
+            flash("Password must be at least 8 characters long.", "error")
+        elif new_password != confirm_password:
+            flash("Passwords do not match.", "error")
+        else:
+            try:
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET password_hash=%s
+                    WHERE user_id=%s
+                    """,
+                    (generate_password_hash(new_password), user_id),
+                )
+                conn.commit()
+                flash("User password updated successfully.", "success")
+                cursor.close()
+                conn.close()
+                return redirect(url_for("admin_users"))
+            except mysql.connector.Error as err:
+                conn.rollback()
+                flash(f"Database error: {err}", "error")
+
+    cursor.close()
+    conn.close()
+    return render_template("admin/user_password_form.html", user=user)
 
 
 @admin_required
@@ -4483,9 +6116,9 @@ def logout():
 
 @login_required
 def edit_booking(booking_id):
-    if g.current_user.get("role") != ROLE_ADMIN:
-        abort(403)
-    return admin_edit_booking(booking_id)
+    if g.current_user.get("role") == ROLE_ADMIN:
+        return admin_edit_booking(booking_id)
+    return user_edit_booking(booking_id)
 
 
 @login_required

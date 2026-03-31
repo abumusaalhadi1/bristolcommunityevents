@@ -1,0 +1,304 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Admin Reports | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Reports</h1>
+        <p style="margin: .25rem 0 0; opacity: .8;">View event, venue, and yearly performance summaries.</p>
+    </div>
+    <a class="btn" href="{{ url_for('admin_dashboard') }}" style="width: auto;">Back to Dashboard</a>
+</div>
+
+<form method="GET" action="{{ url_for('admin_reports') }}" class="admin-filters">
+    <div class="form-group" style="min-width: 220px; flex: 1 1 240px;">
+        <label>Event</label>
+        <select name="event_id">
+            <option value="">All events</option>
+            {% for event in report_events %}
+                <option value="{{ event.event_id }}" {% if selected_event_id|string == event.event_id|string %}selected{% endif %}>
+                    {{ event.event_name }}{% if event.event_date %} - {{ event.event_date.strftime('%b %d, %Y') }}{% endif %}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group" style="min-width: 220px; flex: 1 1 240px;">
+        <label>Venue</label>
+        <select name="venue_id">
+            <option value="">All venues</option>
+            {% for venue in report_venues %}
+                <option value="{{ venue.venue_id }}" {% if selected_venue_id|string == venue.venue_id|string %}selected{% endif %}>
+                    {{ venue.venue_name }}{% if venue.city %} - {{ venue.city }}{% endif %}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group" style="min-width: 140px; flex: 0 1 140px;">
+        <label>Year</label>
+        <input type="number" name="year" min="2000" max="2100" value="{{ selected_year }}" />
+    </div>
+
+    <input type="hidden" name="chart_period" value="{{ selected_chart_period }}" />
+
+    <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
+        <button type="submit" class="btn" style="width: auto;">Run Report</button>
+        <a class="btn" href="{{ url_for('admin_reports') }}" style="width: auto; background: #2c3e50;">Clear</a>
+    </div>
+</form>
+
+<div class="admin-cards">
+    <div class="admin-card">
+        <div class="label">Events in {{ selected_year }}</div>
+        <div class="value">{{ year_report.total_events_in_year or 0 }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Successful Events</div>
+        <div class="value">{{ year_report.successful_events_count or 0 }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Tickets Sold</div>
+        <div class="value">{{ year_report.tickets_sold or 0 }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Revenue</div>
+        <div class="value">&pound;{{ "%.2f"|format(year_report.revenue_total or 0) }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Fully Booked</div>
+        <div class="value">{{ year_report.fully_booked_events_count or 0 }}</div>
+    </div>
+</div>
+
+<section class="receipt-card receipt-card-wide report-chart-card" style="margin-top: 1.25rem;">
+    <div class="report-chart-header">
+        <div>
+            <h2 style="margin-bottom: .25rem;">{{ year_report.event_mix_title or 'Yearly Event Mix' }}</h2>
+            <p class="report-chart-note">{{ year_report.event_mix_note or 'Breakdown of events by booking activity.' }}</p>
+        </div>
+        <div class="report-chart-tools">
+            <form method="GET" action="{{ url_for('admin_reports') }}" class="report-chart-form">
+                <input type="hidden" name="event_id" value="{{ selected_event_id }}">
+                <input type="hidden" name="venue_id" value="{{ selected_venue_id }}">
+                <input type="hidden" name="year" value="{{ selected_year }}">
+                <label for="chart_period_select">Chart Range</label>
+                <select id="chart_period_select" name="chart_period" onchange="this.form.submit()">
+                    <option value="weekly" {% if selected_chart_period == 'weekly' %}selected{% endif %}>Weekly</option>
+                    <option value="monthly" {% if selected_chart_period == 'monthly' %}selected{% endif %}>Monthly</option>
+                    <option value="yearly" {% if selected_chart_period == 'yearly' %}selected{% endif %}>Yearly</option>
+                </select>
+            </form>
+            <div class="report-chart-legend">
+                <span><i style="background:#1a5276;"></i>Active booked</span>
+                <span><i style="background:#e74c3c;"></i>Cancelled only</span>
+                <span><i style="background:#f39c12;"></i>No booking</span>
+            </div>
+        </div>
+    </div>
+    <div class="report-chart-wrap">
+        <canvas id="yearEventMixChart" aria-label="Yearly event mix pie chart" role="img"></canvas>
+    </div>
+</section>
+
+<div class="receipt-grid" style="margin-top: 1.25rem;">
+    <section class="receipt-card">
+        <h2>Event Report</h2>
+        {% if event_report %}
+            <div class="account-summary">
+                <div class="account-row">
+                    <span>Event</span>
+                    <strong>{{ event_report.event_name }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Date</span>
+                    <strong>
+                        {% if event_report.event_end_date and event_report.event_end_date != event_report.event_date %}
+                            {{ event_report.event_date.strftime('%B %d, %Y') if event_report.event_date else '-' }} - {{ event_report.event_end_date.strftime('%B %d, %Y') if event_report.event_end_date else '-' }}
+                        {% else %}
+                            {{ event_report.event_date.strftime('%B %d, %Y') if event_report.event_date else '-' }}
+                        {% endif %}
+                    </strong>
+                </div>
+                <div class="account-row">
+                    <span>Venue</span>
+                    <strong>{{ event_report.venue_name or '-' }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Category</span>
+                    <strong>{{ event_report.category_name or '-' }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Price</span>
+                    <strong>{% if event_report.price is none or event_report.price == 0 %}Free{% else %}&pound;{{ "%.2f"|format(event_report.price) }}{% endif %}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Event Cost</span>
+                    <strong>&pound;{{ "%.2f"|format(event_report.event_cost or 0) }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Bookings</span>
+                    <strong>{{ event_report.bookings_count or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Tickets Sold</span>
+                    <strong>{{ event_report.tickets_sold or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Cancelled Bookings</span>
+                    <strong>{{ event_report.cancelled_bookings or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Remaining Seats</span>
+                    <strong>{{ event_report.remaining_seats if event_report.remaining_seats is not none else 'Unlimited' }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Waitlist</span>
+                    <strong>{{ event_report.waitlist_count or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Revenue</span>
+                    <strong>&pound;{{ "%.2f"|format(event_report.revenue_total or 0) }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Profit</span>
+                    <strong>&pound;{{ "%.2f"|format(event_report.profit_total or 0) }}</strong>
+                </div>
+            </div>
+        {% else %}
+            <p>Select an event to view its booking, revenue, and waitlist totals.</p>
+        {% endif %}
+    </section>
+
+    <section class="receipt-card">
+        <h2>Venue Report</h2>
+        {% if venue_report %}
+            <div class="account-summary">
+                <div class="account-row">
+                    <span>Venue</span>
+                    <strong>{{ venue_report.venue_name }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Location</span>
+                    <strong>{{ venue_report.address or venue_report.city or '-' }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Capacity</span>
+                    <strong>{{ venue_report.capacity }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Total Events</span>
+                    <strong>{{ venue_report.total_events or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Upcoming Events</span>
+                    <strong>{{ venue_report.upcoming_events or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Fully Booked Events</span>
+                    <strong>{{ venue_report.fully_booked_events or 0 }}</strong>
+                </div>
+                <div class="account-row">
+                    <span>Revenue</span>
+                    <strong>&pound;{{ "%.2f"|format(venue_report.revenue_total or 0) }}</strong>
+                </div>
+            </div>
+        {% else %}
+            <p>Select a venue to view venue-wide event and revenue totals.</p>
+        {% endif %}
+    </section>
+</div>
+
+{% if venue_report and venue_report.events %}
+<div class="admin-table-wrap" style="margin-top: 1.25rem;">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>Event</th>
+                <th>Date</th>
+                <th>Category</th>
+                <th>Booked</th>
+                <th>Remaining</th>
+                <th>Price</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in venue_report.events %}
+            <tr>
+                <td>{{ event.event_name }}</td>
+                <td>{{ event.event_date_label }}</td>
+                <td>{{ event.category_name or '-' }}</td>
+                <td>{{ event.booked_tickets or 0 }}</td>
+                <td>{{ event.remaining_seats if event.remaining_seats is not none else 'Unlimited' }}</td>
+                <td>
+                    {% if event.price is none or event.price == 0 %}
+                        Free
+                    {% else %}
+                        &pound;{{ "%.2f"|format(event.price) }}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(() => {
+    const canvas = document.getElementById('yearEventMixChart');
+    if (!canvas || typeof Chart === 'undefined') {
+        return;
+    }
+
+    const labels = {{ year_report.event_mix_labels | tojson }};
+    const values = {{ year_report.event_mix_values | tojson }};
+    const colors = {{ year_report.event_mix_colors | tojson }};
+    const total = values.reduce((sum, value) => sum + value, 0);
+
+    if (!total) {
+        const parent = canvas.parentElement;
+        if (parent) {
+            parent.innerHTML = '<p class="report-chart-empty">No events were found for the selected year.</p>';
+        }
+        return;
+    }
+
+    new Chart(canvas, {
+        type: 'pie',
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                backgroundColor: colors,
+                borderColor: '#ffffff',
+                borderWidth: 2,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false,
+                },
+                tooltip: {
+                    callbacks: {
+                        label(context) {
+                            const value = context.raw || 0;
+                            const percentage = total ? Math.round((value / total) * 100) : 0;
+                            return `${context.label}: ${value} (${percentage}%)`;
+                        },
+                    },
+                },
+            },
+        },
+    });
+})();
+</script>
+{% endblock %}

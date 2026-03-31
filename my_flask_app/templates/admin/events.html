@@ -54,7 +54,7 @@
                 <th>Capacity</th>
                 <th>Remaining</th>
                 <th>Price</th>
-                <th style="width: 140px;">Actions</th>
+                <th style="width: 210px;">Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -65,7 +65,13 @@
                     <div style="font-weight: 800;">{{ e.event_name }}</div>
                     <div style="opacity: .8; font-size: .95rem;">{{ e.location or '-' }}</div>
                 </td>
-                <td>{{ e.event_date.strftime('%B %d, %Y') if e.event_date else '-' }}</td>
+                <td>
+                    {% if e.event_end_date and e.event_end_date != e.event_date %}
+                        {{ e.event_date.strftime('%B %d, %Y') if e.event_date else '-' }} - {{ e.event_end_date.strftime('%B %d, %Y') if e.event_end_date else '-' }}
+                    {% else %}
+                        {{ e.event_date.strftime('%B %d, %Y') if e.event_date else '-' }}
+                    {% endif %}
+                </td>
                 <td>{{ e.venue_name or '-' }}</td>
                 <td>{{ e.category_name or '-' }}</td>
                 <td>{{ e.event_capacity if e.event_capacity is not none else '-' }}</td>
@@ -80,6 +86,11 @@
                 <td>
                     <div class="admin-actions">
                         <a class="admin-link" href="{{ url_for('update_event', event_id=e.event_id) }}">Edit</a>
+                        {% if e.price is not none and e.price > 0 %}
+                        <form method="POST" action="{{ url_for('reduce_event_price', event_id=e.event_id) }}" onsubmit="return confirm('Apply the 25% price reduction to this event?');">
+                            <button type="submit" class="admin-link" style="border: none; background: transparent; padding: 0; font: inherit; cursor: pointer;">Reduce price</button>
+                        </form>
+                        {% endif %}
                         <a class="admin-link" href="{{ url_for('delete_event', event_id=e.event_id) }}">Delete</a>
                     </div>
                 </td>

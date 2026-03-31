@@ -286,6 +286,84 @@ header {
   grid-column: 1 / -1;
 }
 
+.report-chart-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.report-chart-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.report-chart-tools {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: end;
+}
+
+.report-chart-form {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 180px;
+}
+
+.report-chart-form label {
+  color: #52606d;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.report-chart-form select {
+  width: 100%;
+}
+
+.report-chart-note {
+  color: #52606d;
+}
+
+.report-chart-legend {
+  display: flex;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  color: #52606d;
+  font-size: 0.92rem;
+}
+
+.report-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.report-chart-legend i {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.report-chart-wrap {
+  position: relative;
+  min-height: 280px;
+}
+
+.report-chart-wrap canvas {
+  width: 100% !important;
+  height: 320px !important;
+}
+
+.report-chart-empty {
+  padding: 1rem 0;
+  color: #52606d;
+}
+
 .account-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);

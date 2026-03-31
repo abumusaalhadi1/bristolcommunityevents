@@ -52,6 +52,66 @@
             </section>
 
             <section class="account-card">
+                <h2>Your Waitlist</h2>
+                <p style="margin-bottom: 1rem; color: #52606d;">If an event opens up, you'll see the offer here and can complete the booking straight away.</p>
+
+                {% if waitlist_entries %}
+                    <div class="message-list">
+                        {% for entry in waitlist_entries %}
+                        <article class="message-card">
+                            <div class="message-card-head">
+                                <div>
+                                    <h3 style="margin: 0 0 0.2rem;">{{ entry.event_name }}</h3>
+                                    <div class="message-meta">
+                                        Requested {{ entry.requested_tickets }} ticket{{ 's' if entry.requested_tickets|int != 1 else '' }}
+                                        for {{ entry.booking_days }} day{{ 's' if entry.booking_days|int != 1 else '' }}
+                                    </div>
+                                </div>
+                                <span class="status-badge status-{{ entry.status|lower }}">{{ entry.status }}</span>
+                            </div>
+
+                            <div class="message-card-grid">
+                                <div>
+                                    <div class="message-label">Event window</div>
+                                    <div class="message-content">
+                                        {{ entry.event_date.strftime('%B %d, %Y') if entry.event_date else '-' }}
+                                        {% if entry.event_end_date and entry.event_end_date != entry.event_date %}
+                                            - {{ entry.event_end_date.strftime('%B %d, %Y') }}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="message-label">Created</div>
+                                    <div class="message-content">{{ entry.created_at.strftime('%B %d, %Y %H:%M') if entry.created_at else '-' }}</div>
+                                </div>
+                            </div>
+
+                            {% if entry.status == 'Offered' and entry.offer_expires_at %}
+                                <div class="message-meta" style="margin-top: .75rem;">
+                                    Offer expires {{ entry.offer_expires_at.strftime('%B %d, %Y %H:%M') }}
+                                </div>
+                            {% endif %}
+
+                            <div class="message-card-actions">
+                                {% if entry.status == 'Offered' and (not entry.offer_expires_at or entry.offer_expires_at >= now) %}
+                                    <a class="btn" href="{{ url_for('accept_waitlist_offer', waitlist_id=entry.waitlist_id) }}" style="width: auto; background: #2c3e50;">Complete Booking</a>
+                                {% elif entry.status == 'Waiting' %}
+                                    <span class="message-meta">You're still in the queue.</span>
+                                {% elif entry.status == 'Converted' %}
+                                    <span class="message-meta">This offer was converted into a booking.</span>
+                                {% else %}
+                                    <span class="message-meta">{{ entry.status }}</span>
+                                {% endif %}
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p>No waitlist requests yet.</p>
+                {% endif %}
+            </section>
+
+            <section class="account-card">
                 <h2>Your Contact Messages</h2>
                 <p style="margin-bottom: 1rem; color: #52606d;">Replies from the Bristol Community Events team will appear here.</p>
 

@@ -13,7 +13,12 @@
                     Official receipt for booking #{{ booking.booking_id }} | Reference {{ receipt_reference }}
                 </p>
             </div>
-            <a class="btn btn-soft" href="{{ url_for('download_booking_receipt', booking_id=booking.booking_id) }}">Download PDF Receipt</a>
+            <div class="account-actions">
+                {% if booking.status != 'Cancelled' %}
+                <a class="btn btn-soft" href="{{ url_for('edit_booking', booking_id=booking.booking_id) }}">Edit Booking</a>
+                {% endif %}
+                <a class="btn btn-soft" href="{{ url_for('download_booking_receipt', booking_id=booking.booking_id) }}">Download PDF Receipt</a>
+            </div>
         </div>
 
         <div class="receipt-grid">
@@ -25,6 +30,13 @@
                 <p><strong>Payment Status:</strong> {{ booking.payment_status }}</p>
                 <p><strong>Booked At:</strong> {{ booking.booked_at.strftime('%B %d, %Y %H:%M') if booking.booked_at else '-' }}</p>
                 <p><strong>Tickets:</strong> {{ booking.tickets }}</p>
+                <p><strong>Booking Days:</strong> {{ booking.booking_days }}</p>
+                <p><strong>Subtotal:</strong> &pound;{{ "%.2f"|format(booking.subtotal_amount or 0) }}</p>
+                <p><strong>Student Discount:</strong> -&pound;{{ "%.2f"|format(booking.student_discount_amount or 0) }}</p>
+                <p><strong>Advance Discount:</strong> -&pound;{{ "%.2f"|format(booking.advance_discount_amount or 0) }}</p>
+                <p><strong>Discount Total:</strong> -&pound;{{ "%.2f"|format(booking.discount_applied or 0) }}</p>
+                <p><strong>Cancellation Charge:</strong> &pound;{{ "%.2f"|format(booking.cancellation_charge or 0) }}</p>
+                <p><strong>Refund Amount:</strong> &pound;{{ "%.2f"|format(booking.refund_amount or 0) }}</p>
                 <p><strong>Total Paid:</strong> &pound;{{ "%.2f"|format(booking.amount or 0) }}</p>
                 <p><strong>Payment Method:</strong> {{ (booking.payment_method or 'card')|title }}</p>
                 {% if booking.payment_source %}
@@ -36,17 +48,24 @@
                 <h2>User Details</h2>
                 <p><strong>Name:</strong> {{ booking.full_name }}</p>
                 <p><strong>Email:</strong> {{ booking.email }}</p>
-                <p><strong>Phone:</strong> {{ booking.phone or '-' }}</p>
+                <p><strong>Contact Phone:</strong> {{ booking.contact_phone or booking.phone or '-' }}</p>
                 <p><strong>Role:</strong> {{ booking.role|title }}</p>
             </article>
 
             <article class="receipt-card receipt-card-wide">
                 <h2>Event Details</h2>
                 <p><strong>Event:</strong> {{ booking.event_name }}</p>
-                <p><strong>Date:</strong> {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}</p>
+                <p><strong>Date:</strong>
+                    {% if booking.event_end_date and booking.event_end_date != booking.event_date %}
+                        {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }} - {{ booking.event_end_date.strftime('%B %d, %Y') if booking.event_end_date else '-' }}
+                    {% else %}
+                        {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}
+                    {% endif %}
+                </p>
                 <p><strong>Venue:</strong> {{ booking.venue_name or '-' }}</p>
                 <p><strong>Location:</strong> {{ booking.location or booking.address or '-' }}</p>
                 <p><strong>Category:</strong> {{ booking.category_name or '-' }}</p>
+                <p><strong>Conditions:</strong> {{ booking.conditions or 'None listed' }}</p>
             </article>
         </div>
 
