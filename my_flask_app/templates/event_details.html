@@ -12,8 +12,19 @@
             </div>
         </div>
 
+        {% set event_images = [
+            url_for('static', filename='images/events/event-card-1.jpg'),
+            url_for('static', filename='images/events/event-card-2.jpg'),
+            url_for('static', filename='images/events/event-card-3.jpg'),
+            url_for('static', filename='images/events/event-card-4.jpg'),
+            url_for('static', filename='images/events/event-card-5.jpg'),
+            url_for('static', filename='images/events/event-card-6.jpg'),
+            url_for('static', filename='images/events/event-card-7.jpg')
+        ] %}
+        {% set fallback_image = event_images[(event.event_id - 1) % (event_images|length)] %}
+
         <div class="event-card" style="overflow: visible;">
-            <div class="event-image" style="background-image: url('{{ event.image_url or url_for('static', filename='images/events/event-card-1.jpg') }}');">
+            <div class="event-image" style="background-image: url('{{ event.image_url or fallback_image }}');">
                 <span style="position: relative; z-index: 1;">{{ event.event_name }}</span>
             </div>
             <div class="event-content">
