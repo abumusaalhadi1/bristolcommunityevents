@@ -18,7 +18,8 @@ A Flask and MySQL web app for browsing Bristol events, booking tickets, sending 
 - Home page with featured events, stats, and reviews
 - Event browsing with category, date, and price filters
 - Event detail pages with ticket booking
-- Booking flow with student discount and PDF receipt
+- Booking flow with student discount, payment details, and PDF receipt
+- Refund policy page and cancel-booking flow with a 3-day refund window
 - Contact form and account pages for signed-in users
 - Admin pages for events, venues, bookings, reviews, receipts, users, and subscribers
 - Blueprint-based route registration for public, account, auth, admin, and error handling

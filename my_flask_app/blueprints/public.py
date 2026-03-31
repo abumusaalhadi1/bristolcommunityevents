@@ -15,10 +15,13 @@ ROUTES = [
     ("/book-tickets", "book_tickets", {"methods": ["GET", "POST"]}),
     ("/event/<int:event_id>", "event_detail", {}),
     ("/book/<int:event_id>", "book", {"methods": ["GET", "POST"]}),
+    ("/payment-details", "payment_details", {"methods": ["GET", "POST"]}),
     ("/bookings", "bookings_list", {}),
     ("/bookings/<int:booking_id>/receipt", "booking_receipt", {}),
     ("/bookings/<int:booking_id>/receipt/download", "download_booking_receipt", {}),
     ("/bookings/<int:booking_id>/cancel", "cancel_booking", {"methods": ["POST"]}),
+    ("/bookings/<int:booking_id>/refund", "booking_refund", {}),
+    ("/refund-policy", "refund_policy", {}),
     ("/contact", "contact", {"methods": ["GET", "POST"]}),
 ]
 
@@ -26,4 +29,3 @@ ROUTES = [
 @bp.record_once
 def register_public_routes(state):
     register_url_rules(state, ROUTES)
-

@@ -27,6 +27,9 @@
                 <p><strong>Tickets:</strong> {{ booking.tickets }}</p>
                 <p><strong>Total Paid:</strong> &pound;{{ "%.2f"|format(booking.amount or 0) }}</p>
                 <p><strong>Payment Method:</strong> {{ (booking.payment_method or 'card')|title }}</p>
+                {% if booking.payment_source %}
+                <p><strong>Payment Source:</strong> {{ booking.payment_source }}</p>
+                {% endif %}
             </article>
 
             <article class="receipt-card">

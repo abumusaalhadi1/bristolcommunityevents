@@ -5,7 +5,7 @@ grouped into clear sections: constants, helpers, database setup, route
 handlers, and error pages.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 import re
@@ -46,7 +46,21 @@ ROLE_USER = "user"
 BOOKING_STATUSES = ("Pending", "Confirmed", "Cancelled")
 CONTACT_MESSAGE_STATUSES = ("New", "Replied")
 PAYMENT_METHODS = {"paypal", "card", "bank"}
+PAYMENT_METHOD_LABELS = {
+    "paypal": "PayPal",
+    "card": "Credit/Debit Card",
+    "bank": "Bank Transfer",
+}
+PENDING_BOOKING_SESSION_KEY = "pending_booking"
+REFUND_WINDOW_HOURS = 72
+REFUND_PROCESSING_WORKING_DAYS = 2
 ACTIVE_BOOKING_CONDITION = "COALESCE(status, 'Confirmed') <> 'Cancelled'"
+
+CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
+CARD_EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$")
+CVV_RE = re.compile(r"^\d{3,4}$")
+SORT_CODE_RE = re.compile(r"^\d{2}-\d{2}-\d{2}$")
+IBAN_RE = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$")
 
 REVIEW_STATUS_PENDING = "Pending"
 REVIEW_STATUS_APPROVED = "Approved"
@@ -127,6 +141,153 @@ def parse_capacity(value):
 
 def is_valid_email(value: str) -> bool:
     return bool(EMAIL_RE.match(value or ""))
+
+
+def normalize_payment_method(value: str) -> str:
+    payment_method = (value or "").strip().lower()
+    return payment_method if payment_method in PAYMENT_METHODS else ""
+
+
+def payment_method_label(payment_method: str) -> str:
+    return PAYMENT_METHOD_LABELS.get(payment_method, "Payment method")
+
+
+def normalize_card_number(value: str) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
+def normalize_bank_reference(value: str) -> str:
+    normalized = re.sub(r"\s+", "", (value or "").strip().upper())
+    if normalized.isdigit() and len(normalized) == 6:
+        return f"{normalized[:2]}-{normalized[2:4]}-{normalized[4:]}"
+    return normalized
+
+
+def is_valid_card_expiry(value: str) -> bool:
+    value = (value or "").strip()
+    match = CARD_EXPIRY_RE.match(value)
+    if not match:
+        return False
+
+    month = int(match.group(1))
+    year = int(match.group(2))
+    if year < 100:
+        year += 2000
+
+    if month == 12:
+        expiry_boundary = datetime(year + 1, 1, 1)
+    else:
+        expiry_boundary = datetime(year, month + 1, 1)
+
+    return current_datetime() < expiry_boundary
+
+
+def build_payment_source_summary(payment_method: str, form_data) -> str:
+    if payment_method == "paypal":
+        email = (form_data.get("paypal_email") or "").strip().lower()
+        return f"PayPal account {email}" if email else "PayPal account"
+
+    if payment_method == "card":
+        card_number = normalize_card_number(form_data.get("card_number"))
+        card_tail = card_number[-4:] if card_number else ""
+        name_on_card = (form_data.get("card_name") or "").strip()
+        summary = "Card"
+        if card_tail:
+            summary += f" ending {card_tail}"
+        if name_on_card:
+            summary += f" in the name of {name_on_card}"
+        return summary
+
+    if payment_method == "bank":
+        account_number = normalize_card_number(form_data.get("bank_account_number"))
+        account_tail = account_number[-4:] if account_number else ""
+        holder_name = (form_data.get("bank_holder") or "").strip()
+        bank_reference = normalize_bank_reference(form_data.get("bank_sort_code_or_iban"))
+        summary = "Bank transfer"
+        if account_tail:
+            summary += f" account ending {account_tail}"
+        if holder_name:
+            summary += f" in the name of {holder_name}"
+        if bank_reference:
+            summary += f" ({bank_reference})"
+        return summary
+
+    return payment_method_label(payment_method)
+
+
+def validate_payment_details(payment_method: str, form_data):
+    payment_method = normalize_payment_method(payment_method)
+    field_errors = {}
+    cleaned_values = {}
+
+    if payment_method == "card":
+        name_on_card = (form_data.get("card_name") or "").strip()
+        card_number = normalize_card_number(form_data.get("card_number"))
+        expiry_date = (form_data.get("card_expiry") or "").strip()
+        cvv = (form_data.get("card_cvv") or "").strip()
+
+        if not name_on_card:
+            field_errors["card_name"] = "Name on card is required."
+        if not CARD_NUMBER_RE.fullmatch(card_number):
+            field_errors["card_number"] = "Enter a card number with 13 to 19 digits."
+        if not is_valid_card_expiry(expiry_date):
+            field_errors["card_expiry"] = "Enter a valid expiry date in MM/YY or MM/YYYY format."
+        if not CVV_RE.fullmatch(cvv):
+            field_errors["card_cvv"] = "Enter a 3 or 4 digit CVV."
+
+        cleaned_values = {
+            "card_name": name_on_card,
+            "card_number": card_number,
+            "card_expiry": expiry_date,
+            "card_cvv": cvv,
+        }
+    elif payment_method == "paypal":
+        paypal_email = (form_data.get("paypal_email") or "").strip().lower()
+        paypal_password = (form_data.get("paypal_password") or "").strip()
+
+        if not is_valid_email(paypal_email):
+            field_errors["paypal_email"] = "Enter a valid PayPal email address."
+        if len(paypal_password) < 6:
+            field_errors["paypal_password"] = "Enter your PayPal password for this booking."
+
+        cleaned_values = {
+            "paypal_email": paypal_email,
+            "paypal_password": paypal_password,
+        }
+    elif payment_method == "bank":
+        bank_holder = (form_data.get("bank_holder") or "").strip()
+        bank_account_number = normalize_card_number(form_data.get("bank_account_number"))
+        bank_reference = normalize_bank_reference(form_data.get("bank_sort_code_or_iban"))
+
+        if not bank_holder:
+            field_errors["bank_holder"] = "Account holder name is required."
+        if not 6 <= len(bank_account_number) <= 12:
+            field_errors["bank_account_number"] = "Enter a bank account number with 6 to 12 digits."
+        if not (SORT_CODE_RE.fullmatch(bank_reference) or IBAN_RE.fullmatch(bank_reference)):
+            field_errors["bank_sort_code_or_iban"] = "Enter a valid sort code (12-34-56) or IBAN."
+
+        cleaned_values = {
+            "bank_holder": bank_holder,
+            "bank_account_number": bank_account_number,
+            "bank_sort_code_or_iban": bank_reference,
+        }
+    else:
+        field_errors["payment_method"] = "Please choose a valid payment method."
+
+    return field_errors, cleaned_values
+
+
+def refund_deadline_for_event(event_date):
+    if not event_date:
+        return None
+    return event_date - timedelta(days=3)
+
+
+def refund_is_allowed(event_date):
+    refund_deadline = refund_deadline_for_event(event_date)
+    if refund_deadline is None:
+        return False, None
+    return current_date() <= refund_deadline, refund_deadline
 
 
 def to_money(value) -> Decimal:
@@ -1028,6 +1189,12 @@ def initialize_database():
             "payment_method",
             "VARCHAR(50) NULL AFTER amount",
         )
+        add_column_if_missing(
+            cursor,
+            "payments",
+            "payment_source",
+            "VARCHAR(255) NULL AFTER payment_method",
+        )
         ensure_venues_table(cursor)
         ensure_event_venue_foreign_key(cursor)
         ensure_contact_messages_table(cursor)
@@ -1293,7 +1460,7 @@ def fetch_booking_details(cursor, booking_id: int):
                e.event_name, e.event_date, e.location, e.price, e.event_capacity,
                v.venue_name, v.address,
                c.category_name,
-               p.payment_id, p.amount, p.payment_method,
+               p.payment_id, p.amount, p.payment_method, p.payment_source,
                COALESCE(p.payment_status, 'Pending') AS payment_status,
                p.payment_date
         FROM bookings b
@@ -1377,7 +1544,7 @@ def fetch_booking_receipts(cursor, *, q="", limit=None, offset=None):
                COALESCE(b.status, 'Confirmed') AS status,
                u.full_name, u.email,
                e.event_id, e.event_name, e.event_date,
-               p.amount, p.payment_method, COALESCE(p.payment_status, 'Pending') AS payment_status
+               p.amount, p.payment_method, p.payment_source, COALESCE(p.payment_status, 'Pending') AS payment_status
         FROM bookings b
         JOIN users u ON b.user_id = u.user_id
         JOIN events e ON b.event_id = e.event_id
@@ -1690,6 +1857,181 @@ def process_booking_submission(cursor, conn, event, event_id, invalid_redirect):
         conn.rollback()
         flash(f"Database error: {err}", "error")
         return redirect(invalid_redirect)
+
+
+def prepare_payment_details_session(cursor, conn, event, event_id, invalid_redirect):
+    booked_at = current_datetime()
+    today = booked_at.date()
+    tickets = parse_ticket_count(request.form.get("tickets"))
+    phone = request.form.get("phone", "").strip()
+    is_student = "is_student" in request.form
+    payment_method = normalize_payment_method(request.form.get("payment_method"))
+
+    if tickets is None:
+        flash("Tickets must be between 1 and 10.", "error")
+        return redirect(invalid_redirect)
+
+    if not payment_method:
+        flash("Please choose a valid payment method.", "error")
+        return redirect(invalid_redirect)
+
+    if event.get("event_date") and event["event_date"] < today:
+        flash("You cannot book an event that has already taken place.", "error")
+        return redirect(url_for("event_detail", event_id=event_id))
+
+    remaining = event.get("remaining_seats")
+    if remaining is not None and tickets > int(remaining):
+        flash(f"Only {remaining} seat(s) remain for this event.", "error")
+        return redirect(invalid_redirect)
+
+    cursor.execute(
+        f"""
+        SELECT booking_id
+        FROM bookings
+        WHERE user_id=%s
+          AND event_id=%s
+          AND {ACTIVE_BOOKING_CONDITION}
+        """,
+        (g.current_user["user_id"], event_id),
+    )
+    existing_booking = cursor.fetchone()
+    if existing_booking:
+        flash(
+            "You already have a booking for this event. View it in My Bookings.",
+            "error",
+        )
+        return redirect(url_for("my_bookings"))
+
+    subtotal, discount, total_amount = compute_booking_amounts(
+        event.get("price"), tickets, is_student
+    )
+
+    session[PENDING_BOOKING_SESSION_KEY] = {
+        "event_id": int(event_id),
+        "return_url": invalid_redirect,
+        "event_name": event.get("event_name") or "",
+        "event_date": event["event_date"].isoformat() if event.get("event_date") else "",
+        "event_date_label": (
+            event["event_date"].strftime("%B %d, %Y") if event.get("event_date") else ""
+        ),
+        "venue_name": event.get("venue_name") or "",
+        "location": event.get("location") or "",
+        "price": str(to_money(event.get("price"))),
+        "tickets": tickets,
+        "phone": phone,
+        "is_student": bool(is_student),
+        "payment_method": payment_method,
+        "payment_method_label": payment_method_label(payment_method),
+        "booking_date": booked_at.isoformat(timespec="seconds"),
+        "subtotal": str(subtotal),
+        "discount": str(discount),
+        "total_amount": str(total_amount),
+        "remaining_seats": event.get("remaining_seats"),
+        "max_tickets": booking_ticket_limit(event),
+    }
+
+    return redirect(url_for("payment_details"))
+
+
+def create_booking_from_pending(cursor, conn, pending_booking, payment_method, payment_source):
+    event_id = int(pending_booking.get("event_id") or 0)
+    tickets = parse_positive_int(pending_booking.get("tickets"), 1)
+    is_student = bool(pending_booking.get("is_student"))
+    phone = (pending_booking.get("phone") or "").strip()
+    return_url = pending_booking.get("return_url") or url_for("book_tickets")
+    booked_at = current_datetime()
+    today = booked_at.date()
+
+    event = fetch_event(cursor, event_id)
+    if not event:
+        flash("The selected event could not be found. Please start again.", "error")
+        return None, redirect(return_url)
+
+    if event.get("event_date") and event["event_date"] < today:
+        flash("You cannot book an event that has already taken place.", "error")
+        return None, redirect(url_for("event_detail", event_id=event_id))
+
+    remaining = event.get("remaining_seats")
+    if remaining is not None and tickets > int(remaining):
+        flash(f"Only {remaining} seat(s) remain for this event.", "error")
+        return None, redirect(return_url)
+
+    cursor.execute(
+        f"""
+        SELECT booking_id
+        FROM bookings
+        WHERE user_id=%s
+          AND event_id=%s
+          AND {ACTIVE_BOOKING_CONDITION}
+        """,
+        (g.current_user["user_id"], event_id),
+    )
+    existing_booking = cursor.fetchone()
+    if existing_booking:
+        flash(
+            "You already have a booking for this event. View it in My Bookings.",
+            "error",
+        )
+        return None, redirect(url_for("my_bookings"))
+
+    subtotal, discount, total_amount = compute_booking_amounts(
+        event.get("price"), tickets, is_student
+    )
+
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET phone=%s
+            WHERE user_id=%s
+            """,
+            (phone, g.current_user["user_id"]),
+        )
+
+        cursor.execute(
+            """
+            INSERT INTO bookings (
+                user_id, event_id, booking_date, tickets, is_student,
+                discount_applied, status, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                g.current_user["user_id"],
+                event_id,
+                today,
+                tickets,
+                is_student,
+                discount,
+                "Confirmed",
+                booked_at,
+            ),
+        )
+        booking_id = cursor.lastrowid
+
+        cursor.execute(
+            """
+            INSERT INTO payments (
+                booking_id, amount, payment_method, payment_source, payment_status, payment_date
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                booking_id,
+                total_amount,
+                payment_method,
+                payment_source,
+                "Paid",
+                booked_at,
+            ),
+        )
+
+        conn.commit()
+        return booking_id, None
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+        return None, redirect(return_url)
 
 
 @admin_required
@@ -2382,7 +2724,7 @@ def book_tickets():
             flash("Please choose a valid event to book.", "error")
             return redirect(url_for("book_tickets"))
 
-        response = process_booking_submission(
+        response = prepare_payment_details_session(
             cursor,
             conn,
             enrich_booking_event(event),
@@ -2427,7 +2769,7 @@ def book(event_id):
         return render_template("404.html"), 404
 
     if request.method == "POST":
-        response = process_booking_submission(
+        response = prepare_payment_details_session(
             cursor,
             conn,
             enrich_booking_event(event),
@@ -2450,6 +2792,83 @@ def book(event_id):
 
 
 @login_required
+def payment_details():
+    pending_booking = session.get(PENDING_BOOKING_SESSION_KEY)
+    if not pending_booking:
+        flash("Please start a booking before entering payment details.", "error")
+        return redirect(url_for("book_tickets"))
+
+    pending_payment_method = normalize_payment_method(pending_booking.get("payment_method"))
+    if not pending_payment_method:
+        flash("Your payment session is missing a valid payment method.", "error")
+        session.pop(PENDING_BOOKING_SESSION_KEY, None)
+        return redirect(url_for("book_tickets"))
+
+    if request.method == "GET":
+        return render_template(
+            "payment_details.html",
+            pending_booking=pending_booking,
+            payment_method=pending_payment_method,
+            payment_method_label=payment_method_label(pending_payment_method),
+            payment_methods=PAYMENT_METHOD_LABELS,
+            field_errors={},
+            form_values={},
+        )
+
+    payment_method = normalize_payment_method(
+        request.form.get("payment_method") or pending_payment_method
+    )
+    field_errors, cleaned_values = validate_payment_details(payment_method, request.form)
+    if field_errors:
+        flash("Please correct the payment details below.", "error")
+        return render_template(
+            "payment_details.html",
+            pending_booking=pending_booking,
+            payment_method=payment_method or pending_payment_method,
+            payment_method_label=payment_method_label(payment_method or pending_payment_method),
+            payment_methods=PAYMENT_METHOD_LABELS,
+            field_errors=field_errors,
+            form_values=request.form,
+        )
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        booking_id, error_redirect = create_booking_from_pending(
+            cursor,
+            conn,
+            pending_booking,
+            payment_method,
+            build_payment_source_summary(payment_method, cleaned_values),
+        )
+        if booking_id is None:
+            session.pop(PENDING_BOOKING_SESSION_KEY, None)
+            cursor.close()
+            conn.close()
+            return error_redirect or redirect(url_for("book_tickets"))
+
+        session.pop(PENDING_BOOKING_SESSION_KEY, None)
+        flash("Payment details submitted successfully. Your booking is confirmed.", "success")
+        cursor.close()
+        conn.close()
+        return redirect(url_for("booking_receipt", booking_id=booking_id))
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+        cursor.close()
+        conn.close()
+        return render_template(
+            "payment_details.html",
+            pending_booking=pending_booking,
+            payment_method=payment_method,
+            payment_method_label=payment_method_label(payment_method),
+            payment_methods=PAYMENT_METHOD_LABELS,
+            field_errors={},
+            form_values=request.form,
+        )
+
+
+@login_required
 def bookings_list():
     return redirect(url_for("my_bookings"))
 
@@ -2465,7 +2884,7 @@ def my_bookings():
                b.tickets, b.is_student,
                b.discount_applied, COALESCE(b.status, 'Confirmed') AS status,
                e.event_id, e.event_name, e.event_date, e.location,
-               p.amount, p.payment_method, COALESCE(p.payment_status, 'Pending') AS payment_status,
+               p.amount, p.payment_method, p.payment_source, COALESCE(p.payment_status, 'Pending') AS payment_status,
                p.payment_date
         FROM bookings b
         JOIN events e ON b.event_id = e.event_id
@@ -2766,6 +3185,111 @@ def download_booking_receipt(booking_id):
     )
 
 
+def describe_refund_account(booking):
+    payment_source = (booking.get("payment_source") or "").strip()
+    if payment_source:
+        return payment_source
+
+    payment_method = normalize_payment_method(booking.get("payment_method"))
+    if payment_method:
+        return f"The same {payment_method_label(payment_method)} account used for this booking"
+
+    return "The original payment account used for this booking"
+
+
+def refund_status_context(booking, outcome=""):
+    refund_allowed, refund_deadline = refund_is_allowed(booking.get("event_date"))
+    refund_deadline_label = (
+        refund_deadline.strftime("%B %d, %Y") if refund_deadline else ""
+    )
+
+    refund_heading = ""
+    refund_message = ""
+    if outcome == "approved":
+        refund_heading = "Refund approved"
+        refund_message = (
+            f"Your booking has been cancelled. The refund will be processed within "
+            f"{REFUND_PROCESSING_WORKING_DAYS} working days."
+        )
+    elif outcome == "not_allowed":
+        refund_heading = "Refund not allowed"
+        if refund_deadline_label:
+            refund_message = (
+                f"Refunds are available until {refund_deadline_label} for this event. "
+                f"This booking is now outside the 3-day refund window."
+            )
+        else:
+            refund_message = "This booking is outside the 3-day refund window."
+    elif outcome == "already_cancelled":
+        refund_heading = "Booking already cancelled"
+        refund_message = "This booking was already cancelled before this refund check."
+
+    return {
+        "refund_allowed": refund_allowed,
+        "refund_deadline": refund_deadline,
+        "refund_deadline_label": refund_deadline_label,
+        "refund_heading": refund_heading,
+        "refund_message": refund_message,
+        "refund_account": describe_refund_account(booking),
+        "refund_processing_days": REFUND_PROCESSING_WORKING_DAYS,
+        "refund_window_hours": REFUND_WINDOW_HOURS,
+    }
+
+
+def refund_policy():
+    return render_template(
+        "refund_policy.html",
+        booking=None,
+        refund_outcome="",
+        refund_heading="Refund Policy",
+        refund_message="Refunds are available up to 3 days before the event and are processed within 2 working days.",
+        refund_deadline=None,
+        refund_deadline_label="",
+        refund_account="",
+        refund_processing_days=REFUND_PROCESSING_WORKING_DAYS,
+        refund_window_hours=REFUND_WINDOW_HOURS,
+        refund_allowed=False,
+    )
+
+
+@login_required
+def booking_refund(booking_id):
+    outcome = (request.args.get("outcome") or "").strip().lower()
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    booking = fetch_booking_details(cursor, booking_id)
+    cursor.close()
+    conn.close()
+
+    if not booking:
+        return render_template("404.html"), 404
+    if not can_access_booking(booking):
+        abort(403)
+
+    if not outcome:
+        booking_status = (booking.get("status") or "").strip()
+        payment_status = (booking.get("payment_status") or "").strip().lower()
+        if booking_status == "Cancelled" and payment_status.startswith("refund"):
+            outcome = "approved"
+        elif booking_status == "Cancelled":
+            outcome = "already_cancelled"
+
+    context = refund_status_context(booking, outcome)
+    if not context["refund_heading"]:
+        context["refund_heading"] = "Refund Policy"
+        context["refund_message"] = (
+            "Refunds are allowed up to 3 days before the event and are processed within 2 working days."
+        )
+
+    return render_template(
+        "refund_policy.html",
+        booking=booking,
+        refund_outcome=outcome,
+        **context,
+    )
+
+
 @login_required
 def cancel_booking(booking_id):
     conn = get_db_connection()
@@ -2786,10 +3310,19 @@ def cancel_booking(booking_id):
         cursor.close()
         conn.close()
         flash("This booking is already cancelled.", "error")
-        return redirect(url_for("my_bookings"))
+        return redirect(url_for("booking_refund", booking_id=booking_id, outcome="already_cancelled"))
 
     try:
-        now = current_datetime()
+        refund_allowed, _refund_deadline = refund_is_allowed(booking.get("event_date"))
+        if not refund_allowed:
+            flash(
+                "Refund not allowed. Cancellations must be made at least 3 days before the event.",
+                "error",
+            )
+            cursor.close()
+            conn.close()
+            return redirect(url_for("booking_refund", booking_id=booking_id, outcome="not_allowed"))
+
         cursor.execute(
             "UPDATE bookings SET status=%s WHERE booking_id=%s",
             ("Cancelled", booking_id),
@@ -2797,21 +3330,22 @@ def cancel_booking(booking_id):
         cursor.execute(
             """
             UPDATE payments
-            SET payment_status=%s, payment_date=%s
+            SET payment_status=%s
             WHERE booking_id=%s
             """,
-            ("Cancelled", now, booking_id),
+            ("Refund Approved", booking_id),
         )
         conn.commit()
-        flash("Booking cancelled successfully.", "success")
+        flash("Refund approved. Your booking has been cancelled.", "success")
+        cursor.close()
+        conn.close()
+        return redirect(url_for("booking_refund", booking_id=booking_id, outcome="approved"))
     except mysql.connector.Error as err:
         conn.rollback()
         flash(f"Database error: {err}", "error")
-    finally:
         cursor.close()
         conn.close()
-
-    return redirect(url_for("my_bookings"))
+        return redirect(url_for("my_bookings"))
 
 
 def admin_login():

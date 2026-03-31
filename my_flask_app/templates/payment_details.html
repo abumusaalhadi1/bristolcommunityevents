@@ -1,0 +1,160 @@
+{% extends "layout.html" %}
+
+{% block title %}Payment Details | Bristol Community Events{% endblock %}
+
+{% block content %}
+{% set back_url = pending_booking.return_url if pending_booking and pending_booking.return_url else url_for('book_tickets') %}
+<main class="container page-section payment-details-page">
+    <div class="page-header payment-details-header">
+        <div>
+            <p class="eyebrow">Payment details</p>
+            <h1>Payment Details</h1>
+            <p>We have preselected <strong id="selectedPaymentMethodLabel">{{ payment_method_label }}</strong> from the previous step. Complete the matching form below.</p>
+        </div>
+        <a class="btn btn-soft" href="{{ back_url }}">Back to Booking</a>
+    </div>
+
+    <div class="payment-details-grid">
+        <section class="payment-details-card">
+            <h2>Enter Payment Information</h2>
+
+            <form method="POST" action="{{ url_for('payment_details') }}" id="paymentDetailsForm" data-selected-method="{{ payment_method }}">
+                <input type="hidden" name="payment_method" id="paymentMethodValue" value="{{ payment_method }}" />
+
+                <div class="form-group">
+                    <label for="paymentMethodSelect">Payment Method</label>
+                    <select id="paymentMethodSelect" class="payment-method-select">
+                        {% for method_key, method_label in payment_methods.items() %}
+                            <option value="{{ method_key }}" {% if method_key == payment_method %}selected{% endif %}>{{ method_label }}</option>
+                        {% endfor %}
+                    </select>
+                    <small>Choose the method that matches the details you want to enter.</small>
+                </div>
+
+                <div class="payment-method-fields" data-method-panel="card" {% if payment_method != 'card' %}hidden{% endif %}>
+                    <h3>Credit / Debit Card Details</h3>
+                    <div class="form-group">
+                        <label for="card_name">Name on Card</label>
+                        <input type="text" id="card_name" name="card_name" value="{{ form_values.get('card_name', '') }}" autocomplete="cc-name" {% if payment_method == 'card' %}required{% endif %} />
+                        {% if field_errors.card_name %}<small class="field-error">{{ field_errors.card_name }}</small>{% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="card_number">Card Number</label>
+                        <input type="text" id="card_number" name="card_number" inputmode="numeric" pattern="[0-9 ]{13,23}" autocomplete="cc-number" placeholder="1234 5678 9012 3456" {% if payment_method == 'card' %}required{% endif %} />
+                        {% if field_errors.card_number %}<small class="field-error">{{ field_errors.card_number }}</small>{% endif %}
+                    </div>
+                    <div class="payment-details-inline">
+                        <div class="form-group">
+                            <label for="card_expiry">Expiry Date</label>
+                            <input type="text" id="card_expiry" name="card_expiry" value="{{ form_values.get('card_expiry', '') }}" pattern="(0[1-9]|1[0-2])/[0-9]{2,4}" placeholder="MM/YY" autocomplete="cc-exp" {% if payment_method == 'card' %}required{% endif %} />
+                            {% if field_errors.card_expiry %}<small class="field-error">{{ field_errors.card_expiry }}</small>{% endif %}
+                        </div>
+                        <div class="form-group">
+                            <label for="card_cvv">CVV</label>
+                            <input type="password" id="card_cvv" name="card_cvv" inputmode="numeric" pattern="[0-9]{3,4}" autocomplete="cc-csc" maxlength="4" {% if payment_method == 'card' %}required{% endif %} />
+                            {% if field_errors.card_cvv %}<small class="field-error">{{ field_errors.card_cvv }}</small>{% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="payment-method-fields" data-method-panel="paypal" {% if payment_method != 'paypal' %}hidden{% endif %}>
+                    <h3>PayPal Details</h3>
+                    <div class="form-group">
+                        <label for="paypal_email">Email Address</label>
+                        <input type="email" id="paypal_email" name="paypal_email" value="{{ form_values.get('paypal_email', '') }}" autocomplete="email" {% if payment_method == 'paypal' %}required{% endif %} />
+                        {% if field_errors.paypal_email %}<small class="field-error">{{ field_errors.paypal_email }}</small>{% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="paypal_password">Password</label>
+                        <input type="password" id="paypal_password" name="paypal_password" autocomplete="current-password" {% if payment_method == 'paypal' %}required{% endif %} />
+                        <small>No real authentication is performed.</small>
+                        {% if field_errors.paypal_password %}<small class="field-error">{{ field_errors.paypal_password }}</small>{% endif %}
+                    </div>
+                </div>
+
+                <div class="payment-method-fields" data-method-panel="bank" {% if payment_method != 'bank' %}hidden{% endif %}>
+                    <h3>Bank Transfer Details</h3>
+                    <div class="form-group">
+                        <label for="bank_holder">Account Holder Name</label>
+                        <input type="text" id="bank_holder" name="bank_holder" value="{{ form_values.get('bank_holder', '') }}" autocomplete="name" {% if payment_method == 'bank' %}required{% endif %} />
+                        {% if field_errors.bank_holder %}<small class="field-error">{{ field_errors.bank_holder }}</small>{% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="bank_account_number">Account Number</label>
+                        <input type="text" id="bank_account_number" name="bank_account_number" inputmode="numeric" pattern="[0-9]{6,12}" autocomplete="off" {% if payment_method == 'bank' %}required{% endif %} />
+                        {% if field_errors.bank_account_number %}<small class="field-error">{{ field_errors.bank_account_number }}</small>{% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="bank_sort_code_or_iban">Sort Code / IBAN</label>
+                        <input type="text" id="bank_sort_code_or_iban" name="bank_sort_code_or_iban" pattern="[A-Za-z0-9\- ]{6,34}" placeholder="12-34-56 or GB29NWBK..." autocomplete="off" {% if payment_method == 'bank' %}required{% endif %} />
+                    <small>Enter either a UK sort code or an IBAN.</small>
+                        {% if field_errors.bank_sort_code_or_iban %}<small class="field-error">{{ field_errors.bank_sort_code_or_iban }}</small>{% endif %}
+                    </div>
+                </div>
+
+                {% if field_errors.payment_method %}
+                    <div class="flash error">{{ field_errors.payment_method }}</div>
+                {% endif %}
+
+                <div class="payment-actions">
+                    <button type="submit" class="btn">Confirm Payment</button>
+                    <a class="btn btn-soft" href="{{ back_url }}">Change Booking</a>
+                </div>
+
+                <p class="payment-note">
+                    <small>No real transaction will occur.</small>
+                </p>
+            </form>
+        </section>
+
+        <aside class="payment-details-card payment-summary-card">
+            <h2>Booking Summary</h2>
+            <div class="payment-summary-stack">
+                <div class="payment-summary-row">
+                    <span>Event</span>
+                    <strong>{{ pending_booking.event_name }}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Event Date</span>
+                    <strong>{{ pending_booking.event_date_label }}</strong>
+                </div>
+                {% if pending_booking.venue_name %}
+                <div class="payment-summary-row">
+                    <span>Venue</span>
+                    <strong>{{ pending_booking.venue_name }}</strong>
+                </div>
+                {% endif %}
+                <div class="payment-summary-row">
+                    <span>Tickets</span>
+                    <strong>{{ pending_booking.tickets }}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Student Discount</span>
+                    <strong>{% if pending_booking.is_student %}Applied{% else %}Not applied{% endif %}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Subtotal</span>
+                    <strong>&pound;{{ pending_booking.subtotal }}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Discount</span>
+                    <strong>-&pound;{{ pending_booking.discount }}</strong>
+                </div>
+                <div class="payment-summary-row payment-summary-row-total">
+                    <span>Total</span>
+                    <strong>&pound;{{ pending_booking.total_amount }}</strong>
+                </div>
+                <div class="payment-summary-row">
+                    <span>Selected Method</span>
+                    <strong>{{ payment_method_label }}</strong>
+                </div>
+            </div>
+
+            <div class="payment-info-card">
+                <h3>What happens next?</h3>
+                <p>When you confirm, the booking will be created and your receipt will be ready right away.</p>
+            </div>
+        </aside>
+    </div>
+</main>
+{% endblock %}

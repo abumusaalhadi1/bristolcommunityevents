@@ -63,6 +63,7 @@ CREATE TABLE payments (
   booking_id INT NOT NULL,
   amount DECIMAL(10,2) NOT NULL,
   payment_method VARCHAR(50),
+  payment_source VARCHAR(255),
   payment_status VARCHAR(20) NOT NULL,
   payment_date DATETIME,
   FOREIGN KEY (booking_id) REFERENCES bookings(booking_id)

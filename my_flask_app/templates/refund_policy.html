@@ -1,0 +1,71 @@
+{% extends "layout.html" %}
+
+{% block title %}Refund Policy | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main class="container page-section refund-page">
+    <div class="page-header refund-page-header">
+        <div>
+            <p class="eyebrow">Bookings and refunds</p>
+            <h1>{{ refund_heading }}</h1>
+            <p>{{ refund_message or 'Refunds are available up to 3 days before the event and are processed within 2 working days.' }}</p>
+        </div>
+        <a class="btn btn-soft" href="{{ url_for('my_bookings') }}">Back to My Bookings</a>
+    </div>
+
+    {% if refund_outcome %}
+    <section class="refund-banner refund-banner-{{ refund_outcome }}">
+        <h2>{{ refund_heading }}</h2>
+        <p>{{ refund_message }}</p>
+        <div class="refund-banner-meta">
+            <p><strong>Processing time:</strong> {{ refund_processing_days }} working days</p>
+            {% if refund_deadline_label %}
+            <p><strong>Refund deadline:</strong> {{ refund_deadline_label }} (3 days before the event)</p>
+            {% endif %}
+            {% if refund_account %}
+            <p><strong>Refund account:</strong> {{ refund_account }}</p>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    <div class="refund-content-stack">
+        {% if booking %}
+        <section class="refund-booking-card">
+            <h2>Booking Details</h2>
+            <div class="refund-summary-grid">
+                <p><strong>Booking ID:</strong> #{{ booking.booking_id }}</p>
+                <p><strong>Event:</strong> {{ booking.event_name }}</p>
+                <p><strong>Event Date:</strong> {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}</p>
+                <p><strong>Status:</strong> <span class="status-badge status-{{ booking.status|lower }}">{{ booking.status }}</span></p>
+                <p><strong>Payment Method:</strong> {{ (booking.payment_method or 'card')|title }}</p>
+                <p><strong>Refund Account:</strong> {{ refund_account }}</p>
+            </div>
+            {% if refund_deadline_label %}
+            <p class="refund-note">The refund window closes on {{ refund_deadline_label }}.</p>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <section class="policy-grid">
+            <article class="policy-card">
+                <div class="policy-card-icon">3d</div>
+                <h2>Refund Window</h2>
+                <p>Refunds are allowed up to 3 days before the event date. After that point, cancellation is no longer eligible for a refund.</p>
+            </article>
+
+            <article class="policy-card">
+                <div class="policy-card-icon">2d</div>
+                <h2>Processing Time</h2>
+                <p>Approved refunds are processed within 2 working days.</p>
+            </article>
+
+            <article class="policy-card">
+                <div class="policy-card-icon">Acct</div>
+                <h2>Refund Account</h2>
+                <p>The refund always returns to the same payment source used for the booking, such as the original PayPal account, card, or bank account.</p>
+            </article>
+        </section>
+    </div>
+</main>
+{% endblock %}

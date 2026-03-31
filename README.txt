@@ -54,11 +54,17 @@ Booking System
 
 Payment & Receipts
 - Payment method selection (card, PayPal, bank)
+- Payment details page for the selected method with validation
 - Payment records stored in the database
 - Booking confirmation system
 - Receipt generation:
   - HTML receipt page
   - Downloadable PDF receipt
+
+Refunds
+- Refund policy page showing the 3-day refund window
+- Cancel booking flow with refund approval or refusal based on event date
+- Refunds are processed back to the original payment source
 
 Reviews System
 - Logged-in users can submit reviews

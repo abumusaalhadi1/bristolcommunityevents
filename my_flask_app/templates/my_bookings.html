@@ -10,7 +10,10 @@
                 <h1>My Bookings</h1>
                 <p>Track your event bookings, payment status, and receipts.</p>
             </div>
-            <a class="btn" href="{{ url_for('events') }}">Browse Events</a>
+            <div class="account-actions">
+                <a class="btn btn-soft" href="{{ url_for('refund_policy') }}">Refund Policy</a>
+                <a class="btn" href="{{ url_for('events') }}">Browse Events</a>
+            </div>
         </div>
 
         <div class="admin-table-wrap">
@@ -46,8 +49,8 @@
                                 <a class="admin-link" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}">Receipt</a>
                                 <a class="admin-link" href="{{ url_for('download_booking_receipt', booking_id=booking.booking_id) }}">Download PDF</a>
                                 {% if booking.status != 'Cancelled' %}
-                                <form method="POST" action="{{ url_for('cancel_booking', booking_id=booking.booking_id) }}" onsubmit="return confirm('Cancel this booking?');">
-                                    <button type="submit" class="admin-danger">Cancel</button>
+                                <form method="POST" action="{{ url_for('cancel_booking', booking_id=booking.booking_id) }}" onsubmit="return confirm('Cancel this booking and check refund eligibility?');">
+                                    <button type="submit" class="admin-danger">Cancel Booking</button>
                                 </form>
                                 {% endif %}
                             </div>

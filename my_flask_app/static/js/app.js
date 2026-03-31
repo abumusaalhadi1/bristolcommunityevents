@@ -274,6 +274,65 @@
         });
     }
 
+    const paymentDetailsForm = document.getElementById('paymentDetailsForm');
+    const paymentMethodSelect = document.getElementById('paymentMethodSelect');
+    const paymentMethodValue = document.getElementById('paymentMethodValue');
+    const selectedPaymentMethodLabel = document.getElementById('selectedPaymentMethodLabel');
+    const paymentMethodPanels = paymentDetailsForm
+        ? Array.from(paymentDetailsForm.querySelectorAll('[data-method-panel]'))
+        : [];
+    const paymentMethodRequiredFields = {
+        card: ['card_name', 'card_number', 'card_expiry', 'card_cvv'],
+        paypal: ['paypal_email', 'paypal_password'],
+        bank: ['bank_holder', 'bank_account_number', 'bank_sort_code_or_iban'],
+    };
+
+    function syncPaymentPanels(method) {
+        if (!paymentDetailsForm || !paymentMethodValue) {
+            return;
+        }
+
+        const activeMethod = paymentMethodRequiredFields[method] ? method : 'card';
+        paymentMethodValue.value = activeMethod;
+
+        if (paymentMethodSelect && paymentMethodSelect.value !== activeMethod) {
+            paymentMethodSelect.value = activeMethod;
+        }
+
+        if (selectedPaymentMethodLabel && paymentMethodSelect) {
+            const selectedOption = paymentMethodSelect.options[paymentMethodSelect.selectedIndex];
+            selectedPaymentMethodLabel.textContent = selectedOption ? selectedOption.textContent : activeMethod;
+        }
+
+        paymentMethodPanels.forEach((panel) => {
+            const isActive = panel.dataset.methodPanel === activeMethod;
+            panel.hidden = !isActive;
+
+            panel.querySelectorAll('input, select, textarea').forEach((field) => {
+                if (field === paymentMethodSelect || field === paymentMethodValue) {
+                    return;
+                }
+
+                field.disabled = !isActive;
+
+                const requiredNames = paymentMethodRequiredFields[activeMethod] || [];
+                if (isActive && requiredNames.includes(field.name)) {
+                    field.required = true;
+                } else {
+                    field.required = false;
+                }
+            });
+        });
+    }
+
+    if (paymentDetailsForm && paymentMethodSelect && paymentMethodValue) {
+        syncPaymentPanels(paymentMethodSelect.value || paymentMethodValue.value || 'card');
+
+        paymentMethodSelect.addEventListener('change', function () {
+            syncPaymentPanels(this.value);
+        });
+    }
+
     window.processPayment = function () {
         if (!form) return;
         if (paymentMethodField) {

@@ -134,7 +134,8 @@
                     <p>Student discount (10%): -&pound;<span id="summaryDiscount">0.00</span></p>
                     <p><strong>Total: &pound;<span id="summaryTotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></strong></p>
                 </div>
-                <p><small>Receipts are available immediately after payment.</small></p>
+                <p><small>Receipts are available after the payment details page is confirmed.</small></p>
+                <p><small><a class="admin-link" href="{{ url_for('refund_policy') }}">View refund policy</a></small></p>
             </div>
         </div>
     </div>
@@ -143,7 +144,7 @@
 <div class="modal" id="paymentModal">
     <div class="modal-content">
         <span class="close-modal">&times;</span>
-        <h2>Complete Your Payment</h2>
+        <h2>Choose Your Payment Method</h2>
         <p>Event: <strong><span id="modalEventName">{{ event.event_name if event else 'No event selected' }}</span></strong></p>
         <p>Total Amount: <strong>&pound;<span id="modalTotal">{{ "0.00" if event_is_sold_out else ("%.2f"|format(event.price) if event and event.price is not none and event.price > 0 else "0.00") }}</span></strong></p>
         <p class="modal-meta" id="modalEventMeta">
@@ -161,7 +162,7 @@
                 <div class="payment-icon">&#128309;</div>
                 <div class="payment-option-content">
                     <strong>PayPal</strong>
-                    <small>Simulated online payment</small>
+                    <small>Online payment</small>
                 </div>
             </label>
 
@@ -170,7 +171,7 @@
                 <div class="payment-icon">&#128179;</div>
                 <div class="payment-option-content">
                     <strong>Credit or Debit Card</strong>
-                    <small>Processed as a demo card payment</small>
+                    <small>Card payment details</small>
                 </div>
             </label>
 
@@ -179,14 +180,14 @@
                 <div class="payment-icon">&#127970;</div>
                 <div class="payment-option-content">
                     <strong>Bank Transfer</strong>
-                    <small>Recorded as a simulated transfer</small>
+                    <small>Bank transfer details</small>
                 </div>
             </label>
         </div>
 
-        <button class="btn" type="button" onclick="processPayment()">Pay Now</button>
+        <button class="btn" type="button" onclick="processPayment()">Continue to Payment Details</button>
         <p class="payment-note">
-            <small>This is a simulated payment flow. No real transaction will occur.</small>
+            <small>Simulation transaction only. No real transaction will occur. You will enter the chosen payment details on the next page.</small>
         </p>
     </div>
 </div>
