@@ -1,6 +1,6 @@
 # Bristol Community Events (Flask)
 
-A Flask and MySQL web app for browsing Bristol events, booking tickets, sending contact messages, and managing admin tasks.
+A Flask and MySQL web app for browsing Bristol events, booking tickets, joining waitlists, sending contact messages, and managing admin tasks.
 
 ## Project Layout
 - `my_flask_app/app.py` - main Flask app, routes, auth, and database setup
@@ -18,10 +18,13 @@ A Flask and MySQL web app for browsing Bristol events, booking tickets, sending 
 - Home page with featured events, stats, and reviews
 - Event browsing with category, date, and price filters
 - Event detail pages with ticket booking
-- Booking flow with student discount, payment details, and PDF receipt
+- Booking flow with booking-day selection, student and advance-booking discounts, payment details, and PDF receipt
+- Waitlist support for sold-out events, including an account flow to accept an offered booking
+- My bookings page with receipt access, booking edits, cancellations, and refund checks
 - Refund policy page and cancel-booking flow with a 3-day refund window
 - Contact form and account pages for signed-in users
-- Admin pages for events, venues, bookings, reviews, receipts, users, and subscribers
+- Admin pages for events, venues, bookings, reviews, receipts, users, subscribers, and reports
+- Admin tools for editing bookings, reducing event prices, and resetting user passwords
 - Blueprint-based route registration for public, account, auth, admin, and error handling
 - Custom error pages
 
