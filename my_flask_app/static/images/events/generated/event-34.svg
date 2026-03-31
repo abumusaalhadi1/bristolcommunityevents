@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="event-34-title event-34-desc">
+  <title id="event-34-title">Photography Masterclass</title>
+  <desc id="event-34-desc">Custom Bristol Community Events poster for Photography Masterclass.</desc>
+  <defs>
+    <linearGradient id="bg-event-34" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#66f2ee" />
+      <stop offset="52%" stop-color="#3d6fdb" />
+      <stop offset="100%" stop-color="#5c0e10" />
+    </linearGradient>
+    <radialGradient id="glow-event-34" cx="28%" cy="20%" r="78%">
+      <stop offset="0%" stop-color="#bf96fa" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#bf96fa" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="band-event-34" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10" />
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.02" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.12" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="675" fill="url(#bg-event-34)" />
+  <rect width="1200" height="675" fill="url(#glow-event-34)" />
+  <circle cx="1020" cy="120" r="160" fill="#ffffff" opacity="0.12" />
+  <circle cx="1080" cy="110" r="78" fill="#ffffff" opacity="0.08" />
+  <circle cx="200" cy="590" r="250" fill="#000000" opacity="0.12" />
+  <path d="M0 470 C180 400, 280 640, 460 560 S820 390, 1200 520 L1200 675 L0 675 Z" fill="url(#band-event-34)" />
+  <path d="M-20 165 C180 70, 365 115, 540 200 S900 345, 1220 175" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="18" stroke-linecap="round" />
+  <path d="M-20 240 C220 155, 380 220, 595 300 S910 405, 1220 270" fill="none" stroke="#000000" stroke-opacity="0.13" stroke-width="12" stroke-linecap="round" />
+  <g transform="translate(70 70)">
+    <circle cx="72" cy="72" r="72" fill="#ffffff" opacity="0.22" />
+    <circle cx="72" cy="72" r="58" fill="#ffffff" opacity="0.16" />
+    <text x="72" y="88" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" fill="#ffffff" opacity="0.98">PM</text>
+  </g>
+  <text x="78" y="154" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" letter-spacing="4" fill="#ffffff" opacity="0.84">BRISTOL COMMUNITY EVENTS</text>
+  <text x="78" y="390" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" fill="#ffffff">
+    <tspan x="78" y="388">Photography</tspan><tspan x="78" dy="1.15em">Masterclass</tspan>
+  </text>
+  <text x="78" y="498" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="600" fill="#ffffff" opacity="0.92">15 Jul 2026 • Harbourside Gallery • Workshops</text>
+  <rect x="78" y="548" width="312" height="8" rx="4" fill="#ffffff" opacity="0.76" />
+  <rect x="78" y="568" width="188" height="8" rx="4" fill="#ffffff" opacity="0.52" />
+  <g opacity="0.20" fill="#ffffff">
+    <circle cx="930" cy="510" r="50" />
+    <circle cx="985" cy="558" r="18" />
+    <circle cx="1040" cy="500" r="26" />
+    <circle cx="1085" cy="555" r="12" />
+  </g>
+</svg>

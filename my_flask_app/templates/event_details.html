@@ -13,7 +13,7 @@
         </div>
 
         <div class="event-card" style="overflow: visible;">
-            <div class="event-image" style="background-image: url('{{ event.image_url|default(url_for('static', filename='images/events/event-card-1.jpg')) }}');">
+            <div class="event-image" style="background-image: url('{{ event.image_url or url_for('static', filename='images/events/event-card-1.jpg') }}');">
                 <span style="position: relative; z-index: 1;">{{ event.event_name }}</span>
             </div>
             <div class="event-content">

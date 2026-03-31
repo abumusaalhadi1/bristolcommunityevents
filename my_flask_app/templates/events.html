@@ -63,12 +63,13 @@
                     url_for('static', filename='images/events/event-card-3.jpg'),
                     url_for('static', filename='images/events/event-card-4.jpg'),
                     url_for('static', filename='images/events/event-card-5.jpg'),
-                    url_for('static', filename='images/events/event-card-6.jpg')
+                    url_for('static', filename='images/events/event-card-6.jpg'),
+                    url_for('static', filename='images/events/event-card-7.jpg')
                 ] %}
                 {% if events %}
                     {% for event in events %}
                     <div class="event-card">
-                        <div class="event-image" style="background-image: url('{{ event.image_url|default(event_images[loop.index0 % event_images|length]) }}');">
+                        <div class="event-image" style="background-image: url('{{ event.image_url or event_images[loop.index0 % event_images|length] }}');">
                             <span style="position: relative; z-index: 1;">{{ event.event_name }}</span>
                         </div>
                         <div class="event-content">

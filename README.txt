@@ -44,12 +44,20 @@ User Authentication & Accounts
 
 Booking System
 - Ticket booking for events
+- Multi-day event booking support
+- Per-day pricing for events that run across multiple days
 - Validation of:
   - Ticket limits
   - Event availability
   - Duplicate bookings
 - Automatic seat availability tracking
 - Student discount (10%) applied dynamically
+- Advance booking discount tiers applied automatically:
+  - 50 to 60 days before the event: 20%
+  - 35 to 49 days before the event: 15%
+  - 25 to 34 days before the event: 10%
+  - 15 to 24 days before the event: 5%
+  - Less than 15 days: no discount
 - Booking stored in the database with status tracking
 
 Payment & Receipts
@@ -64,6 +72,10 @@ Payment & Receipts
 Refunds
 - Refund policy page showing the 3-day refund window
 - Cancel booking flow with refund approval or refusal based on event date
+- Cancellation charges based on how many days remain before the event:
+  - 40 or more days: no charge
+  - 25 to 39 days: 40% charge
+  - Less than 25 days: 100% charge
 - Refunds are processed back to the original payment source
 
 Reviews System

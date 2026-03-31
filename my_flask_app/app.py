@@ -8,7 +8,11 @@ handlers, and error pages.
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import wraps
+from html import escape as html_escape
+from pathlib import Path
 import re
+import textwrap
+import colorsys
 
 import mysql.connector
 from flask import (
@@ -33,7 +37,7 @@ from config import (
 )
 from dbfunc import get_db_connection
 from receipt import booking_receipt_reference, build_booking_receipt_pdf as _build_booking_receipt_pdf
-from seed_data import DEFAULT_REVIEWS, DEFAULT_VENUES
+from seed_data import DEFAULT_CATEGORIES, DEFAULT_EVENTS, DEFAULT_REVIEWS, DEFAULT_VENUES
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -605,6 +609,145 @@ def lookup_user_id_by_name(cursor, full_name: str):
     return matches[0]["user_id"] if len(matches) == 1 else None
 
 
+def lookup_venue_id_by_name(cursor, venue_name: str):
+    venue_name = (venue_name or "").strip()
+    if not venue_name:
+        return None
+
+    cursor.execute(
+        """
+        SELECT venue_id
+        FROM venues
+        WHERE LOWER(venue_name) = LOWER(%s)
+        LIMIT 2
+        """,
+        (venue_name,),
+    )
+    matches = cursor.fetchall()
+    return matches[0]["venue_id"] if len(matches) == 1 else None
+
+
+def lookup_category_id_by_name(cursor, category_name: str):
+    category_name = (category_name or "").strip()
+    if not category_name:
+        return None
+
+    cursor.execute(
+        """
+        SELECT category_id
+        FROM categories
+        WHERE LOWER(category_name) = LOWER(%s)
+        LIMIT 2
+        """,
+        (category_name,),
+    )
+    matches = cursor.fetchall()
+    return matches[0]["category_id"] if len(matches) == 1 else None
+
+
+def _hex_from_rgb(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def _palette_for_event(event_id: int):
+    hue = (event_id * 37) % 360 / 360.0
+    base = colorsys.hsv_to_rgb(hue, 0.58, 0.95)
+    accent = colorsys.hsv_to_rgb((hue + 0.12) % 1.0, 0.72, 0.86)
+    deep = colorsys.hsv_to_rgb((hue + 0.5) % 1.0, 0.85, 0.36)
+    glow = colorsys.hsv_to_rgb((hue + 0.24) % 1.0, 0.40, 0.98)
+    return tuple(_hex_from_rgb(tuple(int(round(c * 255)) for c in color)) for color in (base, accent, deep, glow))
+
+
+def _wrap_svg_text(text: str, width: int = 18, max_lines: int = 3):
+    lines = textwrap.wrap(text, width=width) or [text]
+    return lines[:max_lines]
+
+
+def build_event_svg(event, event_index: int = 0) -> str:
+    event_name = (event.get("event_name") or "Bristol Event").strip() or "Bristol Event"
+    event_date = event.get("event_date")
+    event_end_date = event.get("event_end_date") or event_date
+    if event_date and event_end_date and event_end_date != event_date:
+        date_label = f"{event_date.strftime('%d %b %Y')} - {event_end_date.strftime('%d %b %Y')}"
+    elif event_date:
+        date_label = event_date.strftime("%d %b %Y")
+    else:
+        date_label = "Upcoming event"
+
+    venue_name = (event.get("venue_name") or "").strip()
+    category_name = (event.get("category_name") or "").strip()
+    initials = build_initials(event_name)
+    title_lines = _wrap_svg_text(event_name, width=18, max_lines=3)
+    title_size = 70 if len(title_lines) == 1 else 58 if len(title_lines) == 2 else 48
+    base, accent, deep, glow = _palette_for_event(int(event.get("event_id") or event_index + 1))
+    svg_id = f"event-{int(event.get('event_id') or event_index + 1)}"
+
+    title_tspans = []
+    for line_index, line in enumerate(title_lines):
+        dy = 0 if line_index == 0 else 1.15
+        x = 78
+        y = 388 if line_index == 0 else None
+        y_attr = f' y="{y}"' if y is not None else ""
+        dy_attr = f' dy="{dy}em"' if line_index > 0 else ""
+        title_tspans.append(f'<tspan x="{x}"{y_attr}{dy_attr}>{html_escape(line)}</tspan>')
+
+    subtitle_bits = [html_escape(date_label)]
+    if venue_name:
+        subtitle_bits.append(html_escape(venue_name))
+    if category_name:
+        subtitle_bits.append(html_escape(category_name))
+    subtitle = " • ".join(subtitle_bits)
+
+    return f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1200 675\" role=\"img\" aria-labelledby=\"{svg_id}-title {svg_id}-desc\">
+  <title id=\"{svg_id}-title\">{html_escape(event_name)}</title>
+  <desc id=\"{svg_id}-desc\">Custom Bristol Community Events poster for {html_escape(event_name)}.</desc>
+  <defs>
+    <linearGradient id=\"bg-{svg_id}\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\">
+      <stop offset=\"0%\" stop-color=\"{base}\" />
+      <stop offset=\"52%\" stop-color=\"{accent}\" />
+      <stop offset=\"100%\" stop-color=\"{deep}\" />
+    </linearGradient>
+    <radialGradient id=\"glow-{svg_id}\" cx=\"28%\" cy=\"20%\" r=\"78%\">
+      <stop offset=\"0%\" stop-color=\"{glow}\" stop-opacity=\"0.95\" />
+      <stop offset=\"100%\" stop-color=\"{glow}\" stop-opacity=\"0\" />
+    </radialGradient>
+    <linearGradient id=\"band-{svg_id}\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"0%\">
+      <stop offset=\"0%\" stop-color=\"#ffffff\" stop-opacity=\"0.10\" />
+      <stop offset=\"50%\" stop-color=\"#ffffff\" stop-opacity=\"0.02\" />
+      <stop offset=\"100%\" stop-color=\"#ffffff\" stop-opacity=\"0.12\" />
+    </linearGradient>
+  </defs>
+  <rect width=\"1200\" height=\"675\" fill=\"url(#bg-{svg_id})\" />
+  <rect width=\"1200\" height=\"675\" fill=\"url(#glow-{svg_id})\" />
+  <circle cx=\"1020\" cy=\"120\" r=\"160\" fill=\"#ffffff\" opacity=\"0.12\" />
+  <circle cx=\"1080\" cy=\"110\" r=\"78\" fill=\"#ffffff\" opacity=\"0.08\" />
+  <circle cx=\"200\" cy=\"590\" r=\"250\" fill=\"#000000\" opacity=\"0.12\" />
+  <path d=\"M0 470 C180 400, 280 640, 460 560 S820 390, 1200 520 L1200 675 L0 675 Z\" fill=\"url(#band-{svg_id})\" />
+  <path d=\"M-20 165 C180 70, 365 115, 540 200 S900 345, 1220 175\" fill=\"none\" stroke=\"#ffffff\" stroke-opacity=\"0.22\" stroke-width=\"18\" stroke-linecap=\"round\" />
+  <path d=\"M-20 240 C220 155, 380 220, 595 300 S910 405, 1220 270\" fill=\"none\" stroke=\"#000000\" stroke-opacity=\"0.13\" stroke-width=\"12\" stroke-linecap=\"round\" />
+  <g transform=\"translate(70 70)\">
+    <circle cx=\"72\" cy=\"72\" r=\"72\" fill=\"#ffffff\" opacity=\"0.22\" />
+    <circle cx=\"72\" cy=\"72\" r=\"58\" fill=\"#ffffff\" opacity=\"0.16\" />
+    <text x=\"72\" y=\"88\" text-anchor=\"middle\" font-family=\"Arial, Helvetica, sans-serif\" font-size=\"34\" font-weight=\"700\" fill=\"#ffffff\" opacity=\"0.98\">{html_escape(initials)}</text>
+  </g>
+  <text x=\"78\" y=\"154\" font-family=\"Arial, Helvetica, sans-serif\" font-size=\"26\" font-weight=\"700\" letter-spacing=\"4\" fill=\"#ffffff\" opacity=\"0.84\">BRISTOL COMMUNITY EVENTS</text>
+  <text x=\"78\" y=\"390\" font-family=\"Arial, Helvetica, sans-serif\" font-size=\"{title_size}\" font-weight=\"800\" fill=\"#ffffff\">
+    {''.join(title_tspans)}
+  </text>
+  <text x=\"78\" y=\"498\" font-family=\"Arial, Helvetica, sans-serif\" font-size=\"28\" font-weight=\"600\" fill=\"#ffffff\" opacity=\"0.92\">{subtitle}</text>
+  <rect x=\"78\" y=\"548\" width=\"312\" height=\"8\" rx=\"4\" fill=\"#ffffff\" opacity=\"0.76\" />
+  <rect x=\"78\" y=\"568\" width=\"188\" height=\"8\" rx=\"4\" fill=\"#ffffff\" opacity=\"0.52\" />
+  <g opacity=\"0.20\" fill=\"#ffffff\">
+    <circle cx=\"930\" cy=\"510\" r=\"50\" />
+    <circle cx=\"985\" cy=\"558\" r=\"18\" />
+    <circle cx=\"1040\" cy=\"500\" r=\"26\" />
+    <circle cx=\"1085\" cy=\"555\" r=\"12\" />
+  </g>
+</svg>
+"""
+
+
 def seed_default_reviews(cursor):
     """Seed demo reviews when the reviews table is empty."""
     cursor.execute(
@@ -645,6 +788,30 @@ def seed_default_reviews(cursor):
                 now,
             ),
     )
+
+
+def seed_default_categories(cursor):
+    """Seed the core event categories used by the demo events."""
+    cursor.execute("SELECT category_name FROM categories")
+    existing_categories = {
+        (row["category_name"] or "").strip().lower()
+        for row in cursor.fetchall()
+        if row.get("category_name")
+    }
+
+    for seed in DEFAULT_CATEGORIES:
+        category_name = (seed.get("category_name") or "").strip()
+        if not category_name or category_name.lower() in existing_categories:
+            continue
+
+        cursor.execute(
+            """
+            INSERT INTO categories (category_name)
+            VALUES (%s)
+            """,
+            (category_name[:100],),
+        )
+        existing_categories.add(category_name.lower())
 
 
 def fetch_reviews(
@@ -934,25 +1101,88 @@ def create_venues_table(cursor):
 
 
 def seed_default_venues(cursor):
-    """Seed demo venues when the venues table is empty."""
-    cursor.execute("SELECT COUNT(*) AS count FROM venues")
-    venue_count = cursor.fetchone()["count"] or 0
-    if venue_count > 0:
-        return
+    """Seed the demo venues used by the event fixtures."""
+    cursor.execute("SELECT venue_name FROM venues")
+    existing_venues = {
+        (row["venue_name"] or "").strip().lower()
+        for row in cursor.fetchall()
+        if row.get("venue_name")
+    }
 
     for seed in DEFAULT_VENUES:
+        venue_name = (seed.get("venue_name") or "").strip()
+        if not venue_name or venue_name.lower() in existing_venues:
+            continue
+
         cursor.execute(
             """
             INSERT INTO venues (venue_name, address, city, capacity)
             VALUES (%s, %s, %s, %s)
             """,
             (
-                seed["venue_name"][:150],
+                venue_name[:150],
                 seed["address"][:255],
                 seed["city"][:100],
                 int(seed.get("capacity") or 0),
             ),
         )
+        existing_venues.add(venue_name.lower())
+
+
+def seed_default_events(cursor):
+    """Seed future demo events that exercise multi-day booking logic."""
+    cursor.execute(
+        """
+        SELECT event_name, event_date, venue_id
+        FROM events
+        """
+    )
+    existing_events = {
+        (
+            (row["event_name"] or "").strip().lower(),
+            row["event_date"],
+            row["venue_id"],
+        )
+        for row in cursor.fetchall()
+        if row.get("event_name") and row.get("event_date") and row.get("venue_id")
+    }
+
+    for seed in DEFAULT_EVENTS:
+        event_name = (seed.get("event_name") or "").strip()
+        event_date = parse_event_date(seed.get("event_date"))
+        event_end_date = parse_event_date(seed.get("event_end_date")) or event_date
+        venue_id = lookup_venue_id_by_name(cursor, seed.get("venue_name"))
+        category_id = lookup_category_id_by_name(cursor, seed.get("category_name"))
+
+        if not event_name or not event_date or venue_id is None or category_id is None:
+            continue
+
+        key = (event_name.lower(), event_date, venue_id)
+        if key in existing_events:
+            continue
+
+        cursor.execute(
+            """
+            INSERT INTO events (
+                event_name, description, location, event_date, event_end_date, price,
+                venue_id, category_id, event_capacity, image_url
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event_name[:255],
+                (seed.get("description") or "").strip(),
+                (seed.get("location") or "").strip()[:255],
+                event_date,
+                event_end_date,
+                to_money(seed.get("price")),
+                venue_id,
+                category_id,
+                int(seed.get("event_capacity") or 0),
+                (seed.get("image_url") or "").strip()[:255] or None,
+            ),
+        )
+        existing_events.add(key)
 
 
 def ensure_venues_table(cursor):
@@ -1449,6 +1679,7 @@ def initialize_database():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        add_column_if_missing(cursor, "events", "description", "TEXT NULL AFTER event_name")
         add_column_if_missing(cursor, "events", "location", "VARCHAR(255) NULL AFTER description")
         add_column_if_missing(cursor, "events", "event_end_date", "DATE NULL AFTER event_date")
         add_column_if_missing(cursor, "events", "conditions", "TEXT NULL AFTER event_end_date")
@@ -1457,6 +1688,12 @@ def initialize_database():
             "events",
             "event_cost",
             "DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER event_capacity",
+        )
+        add_column_if_missing(
+            cursor,
+            "events",
+            "image_url",
+            "VARCHAR(255) NULL AFTER event_cost",
         )
         add_column_if_missing(cursor, "users", "password_hash", "VARCHAR(255) NULL AFTER email")
         add_column_if_missing(
@@ -1544,6 +1781,8 @@ def initialize_database():
             "VARCHAR(255) NULL AFTER payment_method",
         )
         ensure_venues_table(cursor)
+        seed_default_categories(cursor)
+        seed_default_events(cursor)
         ensure_event_venue_foreign_key(cursor)
         ensure_waitlist_table(cursor)
         ensure_contact_messages_table(cursor)

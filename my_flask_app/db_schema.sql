@@ -24,6 +24,7 @@ CREATE TABLE events (
   venue_id INT,
   category_id INT,
   event_capacity INT,
+  image_url VARCHAR(255),
   FOREIGN KEY (venue_id) REFERENCES venues(venue_id) ON DELETE SET NULL,
   FOREIGN KEY (category_id) REFERENCES categories(category_id)
 );
@@ -113,3 +114,11 @@ INSERT INTO venues (venue_name, address, city, capacity) VALUES
 ('Bristol Indoor Arena', 'Arena Road', 'Bristol', 500),
 ('Harbourside Art Space', 'Dock Street', 'Bristol', 300),
 ('UWE Exhibition Hall', 'Frenchay Campus', 'Bristol', 400);
+
+INSERT INTO categories (category_name) VALUES
+('Arts'),
+('Family'),
+('Festival'),
+('Food & Drink'),
+('Music'),
+('Outdoor');

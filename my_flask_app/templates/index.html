@@ -78,7 +78,11 @@
                 <h2>Featured Events</h2>
                 {% set event_images = [
                     url_for('static', filename='images/events/event-card-1.jpg'),
+                    url_for('static', filename='images/events/event-card-2.jpg'),
+                    url_for('static', filename='images/events/event-card-3.jpg'),
+                    url_for('static', filename='images/events/event-card-4.jpg'),
                     url_for('static', filename='images/events/event-card-5.jpg'),
+                    url_for('static', filename='images/events/event-card-6.jpg'),
                     url_for('static', filename='images/events/event-card-7.jpg')
                 ] %}
                 {% if featured_events %}
@@ -86,7 +90,7 @@
                     {% for event in featured_events %}
                     <div class="event-card">
                         <div class="event-image"
-                            style="background-image: url('{{ event.image_url|default(event_images[loop.index0 % event_images|length]) }}');">
+                            style="background-image: url('{{ event.image_url or event_images[loop.index0 % event_images|length] }}');">
                             <span style="position: relative; z-index: 1;">{{ event.event_name }}</span>
                         </div>
                         <div class="event-content">
