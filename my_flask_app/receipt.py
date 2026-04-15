@@ -11,6 +11,9 @@ def booking_receipt_reference(booking_id: int) -> str:
     return f"BCE-{int(booking_id):06d}"
 
 
+STUDENT_ID_DISCLAIMER = "Please bring a valid student ID to the event to verify the 10% student discount."
+
+
 def format_receipt_date(value) -> str:
     if not value:
         return "-"
@@ -105,7 +108,7 @@ def build_booking_receipt_pdf(booking):
     receipt_reference = booking_receipt_reference(booking_id)
     page_width = 612.0
     page_height = 792.0
-    margin = 54.0
+    margin = 42.0
     header_height = 108.0
     body_top = page_height - header_height - 28.0
     body_width_chars = max(50, int((page_width - (2 * margin)) / (11 * 0.52)))
@@ -131,10 +134,10 @@ def build_booking_receipt_pdf(booking):
 
     receipt_text = f"Receipt No. {receipt_reference}"
     booked_text = f"Booked {format_receipt_datetime(booking.get('booked_at') or booking.get('created_at'))}"
-    receipt_x = max(margin, page_width - margin - pdf_approx_text_width(receipt_text, 11))
-    booked_x = max(margin, page_width - margin - pdf_approx_text_width(booked_text, 10))
-    pdf_add_text(ops, receipt_x, page_height - 38, receipt_text, size=11, bold=True)
-    pdf_add_text(ops, booked_x, page_height - 60, booked_text, size=10, bold=False)
+    # Keep both metadata lines anchored to the same x position so they read as a matched block.
+    meta_x = page_width - margin - max(pdf_approx_text_width(receipt_text, 11), pdf_approx_text_width(booked_text, 10)) - 4
+    pdf_add_text(ops, meta_x, page_height - 62, receipt_text, size=11, bold=True)
+    pdf_add_text(ops, meta_x, page_height - 74, booked_text, size=10, bold=False)
     ops.append("0 0 0 rg")
 
     y = body_top
@@ -175,9 +178,9 @@ def build_booking_receipt_pdf(booking):
             bold=True,
         )
         ops.append("0 0 0 rg")
-        y -= 4
+        y -= 2
         pdf_add_line(ops, margin, y, page_width - margin, y, width=0.6, gray=0.88)
-        y -= 16
+        y -= 14
 
     def add_field(label, value):
         nonlocal y
@@ -194,7 +197,6 @@ def build_booking_receipt_pdf(booking):
 
     add_section("Booking Summary")
     add_field("Booking ID", booking_id)
-    add_field("Receipt Reference", receipt_reference)
     add_field("Status", booking.get("status") or "Confirmed")
     add_field("Payment Status", booking.get("payment_status") or "Pending")
     add_field("Booked At", format_receipt_datetime(booking.get("booked_at") or booking.get("created_at")))
@@ -204,11 +206,24 @@ def build_booking_receipt_pdf(booking):
     add_field("Student Discount", f"-£{_to_money(booking.get('student_discount_amount')):.2f}")
     add_field("Advance Discount", f"-£{_to_money(booking.get('advance_discount_amount')):.2f}")
     add_field("Discount Total", f"-£{_to_money(booking.get('discount_applied')):.2f}")
-    add_field("Cancellation Charge", f"£{_to_money(booking.get('cancellation_charge')):.2f}")
-    add_field("Refund Amount", f"£{_to_money(booking.get('refund_amount')):.2f}")
     add_field("Payment Method", (booking.get("payment_method") or "card").title())
     add_field("Total Paid", f"£{_to_money(booking.get('amount')):.2f}")
-
+    if booking.get("is_student"):
+        ops.append("0.73 0.11 0.11 rg")
+        disclaimer_label = "Student ID Disclaimer:"
+        pdf_add_text(ops, margin, y - 2, disclaimer_label, size=11, bold=True)
+        y = pdf_add_paragraph(
+            ops,
+            margin + pdf_approx_text_width(disclaimer_label + " ", 11),
+            y - 2,
+            STUDENT_ID_DISCLAIMER,
+            size=11,
+            leading=14,
+            max_chars=max(20, body_width_chars - len(disclaimer_label)),
+            bold=False,
+        )
+        ops.append("0 0 0 rg")
+        y -= 4
     y -= 8
     add_section("Attendee Details")
     add_field("Name", booking.get("full_name"))
@@ -227,13 +242,13 @@ def build_booking_receipt_pdf(booking):
     else:
         add_field("Date", format_receipt_date(booking.get("event_date")))
     add_field("Venue", booking.get("venue_name") or "-")
-    add_field("Location", booking.get("location") or booking.get("address") or "-")
+    add_field("Address", booking.get("address") or booking.get("location") or "-")
     add_field("Category", booking.get("category_name") or "-")
     add_field("Conditions", booking.get("conditions") or "-")
 
     y -= 8
     pdf_add_line(ops, margin, y, page_width - margin, y, width=0.7, gray=0.82)
-    y -= 18
+    y -= 24
     ops.append("0.10 0.32 0.47 rg")
     y = pdf_add_paragraph(
         ops,
@@ -255,7 +270,7 @@ def build_booking_receipt_pdf(booking):
         leading=13,
         max_chars=body_width_chars,
     )
-
+    y -= 20
     content_stream = "\n".join(ops).encode("latin-1", "replace")
     objects = [
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",

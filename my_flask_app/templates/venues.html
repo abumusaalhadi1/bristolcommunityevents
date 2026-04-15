@@ -27,6 +27,9 @@
                         </div>
 
                         <div class="venue-capacity">Capacity: {{ venue.capacity }}</div>
+                        {% if venue.suitable_for %}
+                        <p class="venue-summary">Suitable for: {{ venue.suitable_for }}</p>
+                        {% endif %}
                         <p class="venue-summary">{{ venue.total_events }} total event{{ 's' if venue.total_events|int != 1 else '' }}</p>
                         <p class="venue-summary">
                             Upcoming:

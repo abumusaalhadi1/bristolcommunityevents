@@ -24,7 +24,7 @@ A Flask and MySQL web app for browsing Bristol events, booking tickets, joining 
 - Refund policy page and cancel-booking flow with a 3-day refund window
 - Contact form and account pages for signed-in users
 - Admin pages for events, venues, bookings, reviews, receipts, users, subscribers, and reports
-- Admin tools for editing bookings, reducing event prices, and resetting user passwords
+- Admin tools for editing bookings, reducing event prices, resetting user passwords, and sending password reset emails
 - Blueprint-based route registration for public, account, auth, admin, and error handling
 - Custom error pages
 
@@ -47,3 +47,14 @@ Environment variables used by the app:
 - `DB_PASSWORD`
 - `DB_NAME`
 - `SECRET_KEY`
+- `PUBLIC_APP_URL`
+- `MAIL_SERVER`
+- `MAIL_PORT`
+- `MAIL_USE_TLS`
+- `MAIL_USE_SSL`
+- `MAIL_USERNAME`
+- `MAIL_PASSWORD`
+- `MAIL_DEFAULT_SENDER`
+- `MAIL_SUPPRESS_SEND`
+
+The app automatically reads `my_flask_app/.env` and a root `.env` file if they exist, so you can keep local mail credentials out of source control.

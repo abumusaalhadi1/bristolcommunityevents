@@ -250,6 +250,26 @@
 
                 <button type="submit" class="btn">Change Password</button>
             </form>
+
+            {% if not is_admin %}
+            <div class="account-divider"></div>
+
+            <h2>Delete Account</h2>
+            <div class="account-danger-note">
+                <strong>This cannot be undone.</strong>
+                <p>Your bookings, waitlist requests, contact messages, and password reset tokens will be removed. Public reviews will be anonymised.</p>
+            </div>
+            <form method="POST" class="account-form" onsubmit="return confirm('Delete your account? This cannot be undone.');">
+                <input type="hidden" name="action" value="delete_account" />
+                <div class="form-group">
+                    <label for="delete_password">Current Password</label>
+                    <input type="password" id="delete_password" name="delete_password" autocomplete="current-password" required />
+                    <small>Enter your current password to confirm you want to delete your account.</small>
+                </div>
+
+                <button type="submit" class="btn btn-danger">Delete My Account</button>
+            </form>
+            {% endif %}
         </section>
     </div>
 </main>

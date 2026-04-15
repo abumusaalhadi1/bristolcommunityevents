@@ -134,8 +134,9 @@
                         <div class="form-group">
                             <label class="student-discount-toggle">
                                 <span>Student discount (10%)</span>
-                                <input type="checkbox" id="is_student" name="is_student" />
+                                <input type="checkbox" id="is_student" name="is_student" data-student-disclaimer-checkbox aria-describedby="studentDiscountDisclaimer" />
                             </label>
+                            <small id="studentDiscountDisclaimer" class="student-discount-disclaimer" data-student-disclaimer hidden>{{ student_id_disclaimer }}</small>
                         </div>
 
                         <button type="button" class="btn" id="proceedToPayment" disabled>Proceed to Payment</button>
@@ -146,6 +147,7 @@
                     <div class="booking-current-event" style="margin-top: 1rem;">
                         <strong>Join the waitlist</strong>
                         <p>This event is fully booked. Add your details and we'll offer the place to the top person on the list when a seat opens up.</p>
+                        <p>Waitlist requests are timestamped and handled in the order they were received.</p>
                     </div>
                     <form method="POST" action="{{ url_for('join_waitlist', event_id=event.event_id) }}">
                         <div class="form-group">

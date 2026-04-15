@@ -146,6 +146,10 @@ Setup Instructions
    - `DB_PASSWORD`
    - `DB_NAME` (default: `bristol_community_events_db`)
    - `DB_PORT` (default: `3306`)
+   - `PUBLIC_APP_URL` for password reset links on a live site
+   - `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USE_TLS`, `MAIL_USE_SSL`
+   - `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_DEFAULT_SENDER`
+   - `MAIL_SUPPRESS_SEND` for local testing
 5. Run the application:
    - `run_app.bat`
    - or:
@@ -158,6 +162,7 @@ Notes
 -----
 - The application automatically seeds sample data (venues and reviews) if tables are empty.
 - Database configuration can be changed in `config.py` or via environment variables.
+- The app also reads `my_flask_app/.env` automatically for local SMTP settings.
 - Passwords are securely hashed before storing.
 - The system uses role-based access control for admin features.
 

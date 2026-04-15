@@ -45,7 +45,36 @@
                                 {% endif %}
                             </strong>
                         </div>
+                        {% if venue.suitable_for %}
+                        <div class="venue-detail-item venue-detail-item-wide">
+                            <span class="venue-detail-label">Suitable for</span>
+                            <strong>{{ venue.suitable_for }}</strong>
+                        </div>
+                        {% endif %}
                     </div>
+
+                    {% if venue.venue_images %}
+                    <div class="venue-photo-collage {% if venue.venue_images|length == 1 %}venue-photo-collage--single{% endif %}">
+                        <div class="venue-photo-collage-main">
+                            <img
+                                src="{{ url_for('static', filename=venue.venue_images[0]) }}"
+                                alt="{{ venue.venue_name }}"
+                            >
+                        </div>
+                        {% if venue.venue_images|length > 1 %}
+                        <div class="venue-photo-collage-stack">
+                            {% for image in venue.venue_images[1:] %}
+                            <div class="venue-photo-collage-thumb">
+                                <img
+                                    src="{{ url_for('static', filename=image) }}"
+                                    alt="{{ venue.venue_name }}"
+                                >
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
                 </article>
 
                 <article class="venue-detail-card">

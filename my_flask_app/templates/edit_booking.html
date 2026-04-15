@@ -79,9 +79,9 @@
                 <div class="form-group">
                     <label class="student-discount-toggle" style="display:flex; gap:.75rem; align-items:center; justify-content:space-between;">
                         <span>Student discount (10%)</span>
-                        <input type="checkbox" name="is_student" {% if booking.is_student %}checked{% endif %} />
+                        <input type="checkbox" name="is_student" {% if booking.is_student %}checked{% endif %} data-student-disclaimer-checkbox aria-describedby="studentDiscountDisclaimer" />
                     </label>
-                    <small>Tick this if you forgot to apply the student discount on the original booking.</small>
+                    <small id="studentDiscountDisclaimer" class="student-discount-disclaimer" data-student-disclaimer {% if not booking.is_student %}hidden{% endif %}>{{ student_id_disclaimer }}</small>
                 </div>
 
                 <div class="form-group">

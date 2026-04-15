@@ -3,80 +3,115 @@
 {% block title %}Admin Reports | Bristol Community Events{% endblock %}
 
 {% block admin_content %}
-<div class="admin-header">
-    <div>
+<section class="report-hero">
+    <div class="report-hero-copy">
+        <p class="report-eyebrow">Analytics overview</p>
         <h1 style="margin: 0;">Reports</h1>
-        <p style="margin: .25rem 0 0; opacity: .8;">View event, venue, and yearly performance summaries.</p>
-    </div>
-    <a class="btn" href="{{ url_for('admin_dashboard') }}" style="width: auto;">Back to Dashboard</a>
-</div>
-
-<form method="GET" action="{{ url_for('admin_reports') }}" class="admin-filters">
-    <div class="form-group" style="min-width: 220px; flex: 1 1 240px;">
-        <label>Event</label>
-        <select name="event_id">
-            <option value="">All events</option>
-            {% for event in report_events %}
-                <option value="{{ event.event_id }}" {% if selected_event_id|string == event.event_id|string %}selected{% endif %}>
-                    {{ event.event_name }}{% if event.event_date %} - {{ event.event_date.strftime('%b %d, %Y') }}{% endif %}
-                </option>
-            {% endfor %}
-        </select>
+        <p style="margin-top: .55rem; max-width: 62ch;">
+            Track bookings, revenue, waitlist activity, and venue performance from one place.
+        </p>
     </div>
 
-    <div class="form-group" style="min-width: 220px; flex: 1 1 240px;">
-        <label>Venue</label>
-        <select name="venue_id">
-            <option value="">All venues</option>
-            {% for venue in report_venues %}
-                <option value="{{ venue.venue_id }}" {% if selected_venue_id|string == venue.venue_id|string %}selected{% endif %}>
-                    {{ venue.venue_name }}{% if venue.city %} - {{ venue.city }}{% endif %}
-                </option>
-            {% endfor %}
-        </select>
+    <div class="report-hero-grid">
+        <div class="report-hero-stat">
+            <span>Year</span>
+            <strong>{{ selected_year }}</strong>
+        </div>
+        <div class="report-hero-stat">
+            <span>Tickets Sold</span>
+            <strong>{{ year_report.tickets_sold or 0 }}</strong>
+        </div>
+        <div class="report-hero-stat">
+            <span>Revenue</span>
+            <strong>&pound;{{ "%.2f"|format(year_report.revenue_total or 0) }}</strong>
+        </div>
+    </div>
+</section>
+
+<section class="receipt-card report-filters-card" style="margin-top: 1rem;">
+    <div class="report-panel-header">
+        <div>
+            <h2 style="margin: 0;">Filters</h2>
+            <p class="report-panel-note">Narrow the data by event, venue, year, or chart range.</p>
+        </div>
+        <a class="btn btn-soft" href="{{ url_for('admin_dashboard') }}" style="width: auto;">Back to Dashboard</a>
     </div>
 
-    <div class="form-group" style="min-width: 140px; flex: 0 1 140px;">
-        <label>Year</label>
-        <input type="number" name="year" min="2000" max="2100" value="{{ selected_year }}" />
-    </div>
+    <form method="GET" action="{{ url_for('admin_reports') }}" class="report-filter-grid">
+        <div class="form-group">
+            <label>Event</label>
+            <select name="event_id">
+                <option value="">All events</option>
+                {% for event in report_events %}
+                    <option value="{{ event.event_id }}" {% if selected_event_id|string == event.event_id|string %}selected{% endif %}>
+                        {{ event.event_name }}{% if event.event_date %} - {{ event.event_date.strftime('%b %d, %Y') }}{% endif %}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
 
-    <input type="hidden" name="chart_period" value="{{ selected_chart_period }}" />
+        <div class="form-group">
+            <label>Venue</label>
+            <select name="venue_id">
+                <option value="">All venues</option>
+                {% for venue in report_venues %}
+                    <option value="{{ venue.venue_id }}" {% if selected_venue_id|string == venue.venue_id|string %}selected{% endif %}>
+                        {{ venue.venue_name }}{% if venue.city %} - {{ venue.city }}{% endif %}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
 
-    <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
-        <button type="submit" class="btn" style="width: auto;">Run Report</button>
-        <a class="btn" href="{{ url_for('admin_reports') }}" style="width: auto; background: #2c3e50;">Clear</a>
-    </div>
-</form>
+        <div class="form-group">
+            <label>Year</label>
+            <input type="number" name="year" min="2000" max="2100" value="{{ selected_year }}" />
+        </div>
 
-<div class="admin-cards">
-    <div class="admin-card">
+        <input type="hidden" name="chart_period" value="{{ selected_chart_period }}" />
+
+        <div style="grid-column: 1 / -1; display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap; justify-content: flex-end;">
+            <button type="submit" class="btn" style="width: auto;">Run Report</button>
+            <a class="btn btn-soft" href="{{ url_for('admin_reports') }}" style="width: auto;">Clear</a>
+        </div>
+    </form>
+</section>
+
+<div class="report-kpi-grid" style="margin-top: 1rem;">
+    <article class="admin-card report-kpi-card is-primary">
         <div class="label">Events in {{ selected_year }}</div>
         <div class="value">{{ year_report.total_events_in_year or 0 }}</div>
-    </div>
-    <div class="admin-card">
+    </article>
+    <article class="admin-card report-kpi-card is-success">
         <div class="label">Successful Events</div>
         <div class="value">{{ year_report.successful_events_count or 0 }}</div>
-    </div>
-    <div class="admin-card">
+    </article>
+    <article class="admin-card report-kpi-card is-warning">
         <div class="label">Tickets Sold</div>
         <div class="value">{{ year_report.tickets_sold or 0 }}</div>
-    </div>
-    <div class="admin-card">
+    </article>
+    <article class="admin-card report-kpi-card is-accent">
         <div class="label">Revenue</div>
         <div class="value">&pound;{{ "%.2f"|format(year_report.revenue_total or 0) }}</div>
-    </div>
-    <div class="admin-card">
+    </article>
+    <article class="admin-card report-kpi-card is-warning">
+        <div class="label">Cost</div>
+        <div class="value">&pound;{{ "%.2f"|format(year_report.cost_total or 0) }}</div>
+    </article>
+    <article class="admin-card report-kpi-card is-danger">
+        <div class="label">Profit</div>
+        <div class="value">&pound;{{ "%.2f"|format(year_report.profit_total or 0) }}</div>
+    </article>
+    <article class="admin-card report-kpi-card is-primary">
         <div class="label">Fully Booked</div>
         <div class="value">{{ year_report.fully_booked_events_count or 0 }}</div>
-    </div>
+    </article>
 </div>
 
-<section class="receipt-card receipt-card-wide report-chart-card" style="margin-top: 1.25rem;">
-    <div class="report-chart-header">
+<section class="receipt-card report-chart-card report-panel" style="margin-top: 1rem;">
+    <div class="report-panel-header">
         <div>
-            <h2 style="margin-bottom: .25rem;">{{ year_report.event_mix_title or 'Yearly Event Mix' }}</h2>
-            <p class="report-chart-note">{{ year_report.event_mix_note or 'Breakdown of events by booking activity.' }}</p>
+            <h2 style="margin: 0;">{{ year_report.event_mix_title or 'Yearly Event Mix' }}</h2>
+            <p class="report-panel-note">{{ year_report.event_mix_note or 'Breakdown of events by booking activity.' }}</p>
         </div>
         <div class="report-chart-tools">
             <form method="GET" action="{{ url_for('admin_reports') }}" class="report-chart-form">
@@ -102,9 +137,14 @@
     </div>
 </section>
 
-<div class="receipt-grid" style="margin-top: 1.25rem;">
-    <section class="receipt-card">
-        <h2>Event Report</h2>
+<div class="report-panels" style="margin-top: 1rem;">
+    <section class="receipt-card report-panel">
+        <div class="report-panel-header">
+            <div>
+                <h2 style="margin: 0;">Event Report</h2>
+                <p class="report-panel-note">Detailed performance for the selected event.</p>
+            </div>
+        </div>
         {% if event_report %}
             <div class="account-summary">
                 <div class="account-row">
@@ -167,12 +207,17 @@
                 </div>
             </div>
         {% else %}
-            <p>Select an event to view its booking, revenue, and waitlist totals.</p>
+            <p class="report-empty">Select an event to view booking, revenue, and waitlist totals.</p>
         {% endif %}
     </section>
 
-    <section class="receipt-card">
-        <h2>Venue Report</h2>
+    <section class="receipt-card report-panel">
+        <div class="report-panel-header">
+            <div>
+                <h2 style="margin: 0;">Venue Report</h2>
+                <p class="report-panel-note">Venue-wide totals and occupancy.</p>
+            </div>
+        </div>
         {% if venue_report %}
             <div class="account-summary">
                 <div class="account-row">
@@ -205,44 +250,53 @@
                 </div>
             </div>
         {% else %}
-            <p>Select a venue to view venue-wide event and revenue totals.</p>
+            <p class="report-empty">Select a venue to view venue-wide event and revenue totals.</p>
         {% endif %}
     </section>
 </div>
 
 {% if venue_report and venue_report.events %}
-<div class="admin-table-wrap" style="margin-top: 1.25rem;">
-    <table class="admin-table">
-        <thead>
-            <tr>
-                <th>Event</th>
-                <th>Date</th>
-                <th>Category</th>
-                <th>Booked</th>
-                <th>Remaining</th>
-                <th>Price</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for event in venue_report.events %}
-            <tr>
-                <td>{{ event.event_name }}</td>
-                <td>{{ event.event_date_label }}</td>
-                <td>{{ event.category_name or '-' }}</td>
-                <td>{{ event.booked_tickets or 0 }}</td>
-                <td>{{ event.remaining_seats if event.remaining_seats is not none else 'Unlimited' }}</td>
-                <td>
-                    {% if event.price is none or event.price == 0 %}
-                        Free
-                    {% else %}
-                        &pound;{{ "%.2f"|format(event.price) }}
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+<section class="receipt-card report-panel report-table-card" style="margin-top: 1rem;">
+    <div class="report-panel-header">
+        <div>
+            <h2 style="margin: 0;">Venue Event Breakdown</h2>
+            <p class="report-panel-note">Bookings, remaining seats, and pricing for each event at the selected venue.</p>
+        </div>
+    </div>
+
+    <div class="admin-table-wrap" style="margin-top: .75rem;">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Event</th>
+                    <th>Date</th>
+                    <th>Category</th>
+                    <th>Booked</th>
+                    <th>Remaining</th>
+                    <th>Price</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in venue_report.events %}
+                <tr>
+                    <td>{{ event.event_name }}</td>
+                    <td>{{ event.event_date_label }}</td>
+                    <td>{{ event.category_name or '-' }}</td>
+                    <td>{{ event.booked_tickets or 0 }}</td>
+                    <td>{{ event.remaining_seats if event.remaining_seats is not none else 'Unlimited' }}</td>
+                    <td>
+                        {% if event.price is none or event.price == 0 %}
+                            Free
+                        {% else %}
+                            &pound;{{ "%.2f"|format(event.price) }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 {% endif %}
 {% endblock %}
 

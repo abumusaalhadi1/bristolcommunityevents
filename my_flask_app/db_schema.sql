@@ -7,6 +7,8 @@ CREATE TABLE venues (
   venue_name VARCHAR(150) NOT NULL,
   address VARCHAR(255),
   city VARCHAR(100),
+  suitable_for VARCHAR(255),
+  image_url VARCHAR(500),
   capacity INT NOT NULL
 );
 
@@ -21,6 +23,7 @@ CREATE TABLE events (
   description TEXT,
   event_date DATE,
   price DECIMAL(10,2),
+  event_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   venue_id INT,
   category_id INT,
   event_capacity INT,
@@ -34,10 +37,26 @@ CREATE TABLE users (
   full_name VARCHAR(255) NOT NULL,
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255),
+  password_changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   role VARCHAR(20) NOT NULL DEFAULT 'user',
   phone VARCHAR(20),
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE password_reset_tokens (
+  reset_token_id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  requested_by INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  UNIQUE KEY uq_password_reset_tokens_token_hash (token_hash),
+  KEY idx_password_reset_tokens_user_id (user_id),
+  KEY idx_password_reset_tokens_expires_at (expires_at),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (requested_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE newsletter_subscribers (
   subscriber_id INT PRIMARY KEY AUTO_INCREMENT,
@@ -107,13 +126,21 @@ CREATE TABLE reviews (
 );
 
 -- Sample data
-INSERT INTO venues (venue_name, address, city, capacity) VALUES
-('Bristol City Centre Hall', 'Broad Street', 'Bristol', 500),
-('Harbourside Gallery', 'Dock Road', 'Bristol', 300),
-('Ashton Court Estate', 'Ashton Court', 'Bristol', 400),
-('Bristol Indoor Arena', 'Arena Road', 'Bristol', 500),
-('Harbourside Art Space', 'Dock Street', 'Bristol', 300),
-('UWE Exhibition Hall', 'Frenchay Campus', 'Bristol', 400);
+INSERT INTO venues (venue_name, address, city, suitable_for, image_url, capacity) VALUES
+('Bristol City Centre Hall', 'Broad Street, Bristol BS1 2EA', 'Bristol', 'Conferences, Exhibitions, Community Gatherings', 'images/venue/Bristol City Centre Hall.jpg', 500),
+('Harbourside Art Space', 'Dock Street, Bristol BS1 5AQ', 'Bristol', 'Exhibitions, Workshops, Music', 'images/venue/Harbourside Art Space.jpg', 300),
+('Ashton Court Estate', 'Ashton Court Estate, Long Ashton, Bristol BS41 9JN', 'Bristol', 'Outdoor Events, Festivals, Exhibitions', 'images/venue/Ashton Court Estate.jpg', 400),
+('Bristol Indoor Arena', 'Arena Road, Bristol BS1 5TT', 'Bristol', 'Sports, Concerts, Exhibitions', 'images/venue/Bristol Indoor Arena.jpg', 500),
+('Ashton Gate Stadium', 'Ashton Gate Stadium, Ashton Road, Bristol BS3 2EJ', 'Bristol', 'Musical, Sports, Exhibitions', 'images/venue/Ashton Gate Stadium.jpg', 150),
+('Arnolfini', '16 Narrow Quay, Bristol BS1 4QA', 'Bristol', 'Exhibitions, Workshops', 'images/venue/Arnolfini.jpg', 100),
+('The Bristol Hippodrome', 'St Augustine''s Parade, Bristol BS1 4UZ', 'Bristol', 'Theatre, Musical', 'images/venue/The Bristol Hippodrome.jpg', 120),
+('Bristol Old Vic', 'King Street, Bristol BS1 4ED', 'Bristol', 'Theatre', 'images/venue/Bristol Old Vic.jpg', 110),
+('Bristol Central Library', 'Deanery Road, City Centre, Bristol BS1 5TL', 'Bristol', 'Library Exhibitions', 'images/venue/Bristol Central Library.jpg', 50),
+('Royal West of England Academy', 'Queens Road, Clifton, Bristol BS8 1PX', 'Bristol', 'Exhibitions', 'images/venue/Royal West of England Academy.jpg', 100),
+('UWE Exhibition Centre', 'North Entrance, Frenchay Campus, Filton Road, Bristol BS34 8QZ', 'Bristol', 'Wedding, Workshops, Conference, Exhibitions', 'images/venue/UWE Exhibition Centre.jpg', 300),
+('Creative Space A', '28 King Street, Bristol BS1 4EF', 'Bristol', 'Workshops', 'images/venue/Creative Space A.jpg', 30),
+('Creative Space B', '12 Temple Gate, Bristol BS1 6ED', 'Bristol', 'Workshops, Courses', 'images/venue/Creative Space B.jpg', 50),
+('Community Centre A', '101 Church Road, Bristol BS5 8AF', 'Bristol', 'Private events (e.g., birthday parties, religious events)', 'images/venue/Community Centre A.jpg', 60);
 
 INSERT INTO categories (category_name) VALUES
 ('Arts'),

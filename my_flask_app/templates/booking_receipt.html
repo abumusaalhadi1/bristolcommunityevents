@@ -42,6 +42,9 @@
                 {% if booking.payment_source %}
                 <p><strong>Payment Source:</strong> {{ booking.payment_source }}</p>
                 {% endif %}
+                {% if booking.is_student %}
+                <p class="student-discount-disclaimer"><strong>Student ID Disclaimer:</strong> {{ student_id_disclaimer }}</p>
+                {% endif %}
             </article>
 
             <article class="receipt-card">

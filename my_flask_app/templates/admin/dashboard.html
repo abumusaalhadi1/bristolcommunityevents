@@ -43,16 +43,20 @@
         <div style="margin-top: .3rem; color: #5d6b7b; font-weight: 600;">{{ pending_reviews_count }} pending</div>
     </div>
     <div class="admin-card">
-        <div class="label">Approved Reviews</div>
-        <div class="value">{{ approved_reviews_count }}</div>
-    </div>
-    <div class="admin-card">
         <div class="label">Tickets Sold</div>
         <div class="value">{{ tickets_total }}</div>
     </div>
     <div class="admin-card">
         <div class="label">Revenue</div>
         <div class="value">&pound;{{ "%.2f"|format(revenue_total) }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Cost</div>
+        <div class="value">&pound;{{ "%.2f"|format(cost_total) }}</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Profit</div>
+        <div class="value">&pound;{{ "%.2f"|format(profit_total) }}</div>
     </div>
 </div>
 

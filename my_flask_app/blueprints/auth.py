@@ -8,6 +8,7 @@ ROUTES = [
     ("/login", "login", {"methods": ["GET", "POST"]}),
     ("/register", "register", {"methods": ["GET", "POST"]}),
     ("/logout", "logout", {}),
+    ("/reset-password/<token>", "reset_password", {"methods": ["GET", "POST"]}),
 ]
 
 

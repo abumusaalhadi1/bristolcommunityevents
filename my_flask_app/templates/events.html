@@ -58,13 +58,13 @@
 
             <div class="events-grid">
                 {% set event_images = [
-                    url_for('static', filename='images/events/event-card-1.jpg'),
-                    url_for('static', filename='images/events/event-card-2.jpg'),
-                    url_for('static', filename='images/events/event-card-3.jpg'),
-                    url_for('static', filename='images/events/event-card-4.jpg'),
-                    url_for('static', filename='images/events/event-card-5.jpg'),
-                    url_for('static', filename='images/events/event-card-6.jpg'),
-                    url_for('static', filename='images/events/event-card-7.jpg')
+                    url_for('static', filename='images/event/event-card-1.jpg'),
+                    url_for('static', filename='images/event/event-card-2.jpg'),
+                    url_for('static', filename='images/event/event-card-3.jpg'),
+                    url_for('static', filename='images/event/event-card-4.jpg'),
+                    url_for('static', filename='images/event/event-card-5.jpg'),
+                    url_for('static', filename='images/event/event-card-6.jpg'),
+                    url_for('static', filename='images/event/event-card-7.jpg')
                 ] %}
                 {% if events %}
                     {% for event in events %}
@@ -162,6 +162,9 @@
                         </div>
 
                         <div class="venue-capacity">Capacity: {{ venue.capacity }}</div>
+                        {% if venue.suitable_for %}
+                        <p class="venue-summary">Suitable for: {{ venue.suitable_for }}</p>
+                        {% endif %}
                         <p class="venue-summary">{{ venue.upcoming_events }} upcoming event{{ 's' if venue.upcoming_events|int != 1 else '' }}</p>
                         <p class="venue-summary">
                             Next event:

@@ -13,13 +13,13 @@
         </div>
 
         {% set event_images = [
-            url_for('static', filename='images/events/event-card-1.jpg'),
-            url_for('static', filename='images/events/event-card-2.jpg'),
-            url_for('static', filename='images/events/event-card-3.jpg'),
-            url_for('static', filename='images/events/event-card-4.jpg'),
-            url_for('static', filename='images/events/event-card-5.jpg'),
-            url_for('static', filename='images/events/event-card-6.jpg'),
-            url_for('static', filename='images/events/event-card-7.jpg')
+            url_for('static', filename='images/event/event-card-1.jpg'),
+            url_for('static', filename='images/event/event-card-2.jpg'),
+            url_for('static', filename='images/event/event-card-3.jpg'),
+            url_for('static', filename='images/event/event-card-4.jpg'),
+            url_for('static', filename='images/event/event-card-5.jpg'),
+            url_for('static', filename='images/event/event-card-6.jpg'),
+            url_for('static', filename='images/event/event-card-7.jpg')
         ] %}
         {% set fallback_image = event_images[(event.event_id - 1) % (event_images|length)] %}
 
@@ -40,9 +40,6 @@
                     </div>
                     <div class="event-detail">
                         <strong>Address:</strong> {{ event.address or '-' }}
-                    </div>
-                    <div class="event-detail">
-                        <strong>Location:</strong> {{ event.location or '-' }}
                     </div>
                     <div class="event-detail">
                         <strong>Category:</strong> {{ event.category_name or 'Uncategorised' }}
@@ -75,10 +72,32 @@
                 </p>
                 {% if event.is_sold_out %}
                     {% if is_authenticated %}
-                        <form method="POST" action="{{ url_for('join_waitlist', event_id=event.event_id) }}" style="display:flex; gap:.75rem; flex-wrap: wrap; align-items: flex-end;">
-                            <input type="hidden" name="tickets" value="1" />
-                            <input type="hidden" name="booking_days" value="1" />
+                        <form method="POST" action="{{ url_for('join_waitlist', event_id=event.event_id) }}" style="display:grid; gap:.75rem; max-width: 420px; margin-top: 1rem;">
+                            <div class="form-group">
+                                <label for="waitlistTickets">Number of Tickets</label>
+                                <select id="waitlistTickets" name="tickets" required>
+                                    {% for n in range(1, 11) %}
+                                        <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="waitlistDays">Booking Days</label>
+                                <select id="waitlistDays" name="booking_days" required>
+                                    {% for n in range(1, event.event_duration_days + 1) %}
+                                        <option value="{{ n }}" {% if n == 1 %}selected{% endif %}>{{ n }}</option>
+                                    {% endfor %}
+                                </select>
+                                {% if event.event_duration_days > 1 %}
+                                    <small>Choose how many days you want to attend if a place opens up.</small>
+                                {% else %}
+                                    <small>This event runs for one day.</small>
+                                {% endif %}
+                            </div>
+
                             <button type="submit" class="btn" style="width: auto;">Join Waitlist</button>
+                            <p style="margin: 0; color: #52606d; font-size: .95rem;">Waitlist requests are timestamped so the earliest request is handled first.</p>
                         </form>
                     {% else %}
                         <a href="{{ url_for('login', next=url_for('event_detail', event_id=event.event_id)) }}" class="btn" style="width: auto;">Login to Join Waitlist</a>

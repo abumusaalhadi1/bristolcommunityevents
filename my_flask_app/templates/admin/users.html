@@ -37,7 +37,7 @@
         <tbody>
             {% for u in users %}
             <tr>
-                <td>{{ u.user_id }}</td>
+                <td>#{{ u.user_id }}</td>
                 <td>{{ u.full_name or '-' }}</td>
                 <td>{{ u.email }}</td>
                 <td>{{ u.phone or '-' }}</td>
@@ -48,7 +48,14 @@
                 <td class="admin-actions">
                     <a class="admin-link" href="{{ url_for('admin_bookings', q=u.email) }}">View bookings</a>
                     <a class="admin-link" href="{{ url_for('admin_reset_user_password', user_id=u.user_id) }}">Reset password</a>
-                    <span class="admin-link" style="opacity: .45; cursor: not-allowed;" title="Coming soon">Send reset password link to email</span>
+                    <form method="POST" action="{{ url_for('admin_send_user_password_reset_email', user_id=u.user_id) }}" style="display:inline;" onsubmit="return confirm('Send a password reset link to this user?');">
+                        <input type="hidden" name="next" value="{{ url_for('admin_users') }}" />
+                        <button type="submit" class="admin-link" style="border: none; background: transparent; padding: 0; font: inherit; cursor: pointer;">Send reset password link to email</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('admin_delete_user', user_id=u.user_id) }}" onsubmit="return confirm('Delete this user account? Their bookings and waitlist requests will be removed.');" style="display:inline;">
+                        <input type="hidden" name="next" value="{{ url_for('admin_users', q=q) if q else url_for('admin_users') }}" />
+                        <button type="submit" class="admin-danger">Delete user</button>
+                    </form>
                 </td>
             </tr>
             {% else %}

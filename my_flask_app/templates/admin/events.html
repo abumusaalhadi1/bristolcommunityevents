@@ -60,7 +60,7 @@
         <tbody>
             {% for e in events %}
             <tr>
-                <td>{{ e.event_id }}</td>
+                <td>#{{ e.event_id }}</td>
                 <td>
                     <div style="font-weight: 800;">{{ e.event_name }}</div>
                     <div style="opacity: .8; font-size: .95rem;">{{ e.location or '-' }}</div>

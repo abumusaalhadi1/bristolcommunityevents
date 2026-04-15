@@ -3,56 +3,126 @@
 {% block title %}Edit Booking | Admin{% endblock %}
 
 {% block admin_content %}
-<div class="admin-header">
+<div class="admin-header admin-header-actions">
     <div>
-        <h1 style="margin: 0;">Edit booking #{{ booking.booking_id }}</h1>
-        <p style="margin: .25rem 0 0; opacity: .85;">
+        <p class="admin-eyebrow">Bookings</p>
+        <h1>Edit booking #{{ booking.booking_id }}</h1>
+        <p class="admin-subtitle">
             {{ booking.full_name }} ({{ booking.email }}) | {{ booking.event_name }} on {{ booking.event_date.strftime('%B %d, %Y') }}
         </p>
         {% if booking.available_for_update is defined %}
-            <p style="margin: .25rem 0 0; opacity: .85;">
+            <p class="admin-subtitle" style="margin-top: .25rem;">
                 Seats available for update: {{ booking.available_for_update if booking.available_for_update is not none else 'Unlimited' }}
             </p>
         {% endif %}
     </div>
-    <a class="btn" href="{{ url_for('admin_bookings') }}" style="width: auto; background: #2c3e50;">Back</a>
+    <a class="btn btn-soft" href="{{ url_for('admin_bookings') }}" style="width: auto;">Back to Bookings</a>
 </div>
 
-<form method="POST" class="admin-form" style="margin-top: 1rem;">
-    <div class="form-group">
-        <label for="tickets">Tickets</label>
-        <select id="tickets" name="tickets" required>
-            {% for n in range(1, max_tickets + 1) %}
-                <option value="{{ n }}" {% if n == booking.tickets %}selected{% endif %}>{{ n }}</option>
-            {% endfor %}
-        </select>
-        <small style="display:block; margin-top:.35rem; opacity:.8;">Max 10 tickets per booking.</small>
-    </div>
+<div class="receipt-grid admin-booking-edit-grid">
+    <section class="receipt-card admin-booking-edit-card">
+        <h2>Current Booking</h2>
+        <div class="account-summary">
+            <div class="account-row">
+                <span>Booking ID</span>
+                <strong>#{{ booking.booking_id }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Event</span>
+                <strong>{{ booking.event_name }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Date</span>
+                <strong>
+                    {% if booking.event_end_date and booking.event_end_date != booking.event_date %}
+                        {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }} - {{ booking.event_end_date.strftime('%B %d, %Y') if booking.event_end_date else '-' }}
+                    {% else %}
+                        {{ booking.event_date.strftime('%B %d, %Y') if booking.event_date else '-' }}
+                    {% endif %}
+                </strong>
+            </div>
+            <div class="account-row">
+                <span>Venue</span>
+                <strong>{{ booking.venue_name or '-' }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Tickets</span>
+                <strong>{{ booking.tickets }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Student Discount</span>
+                <strong>{% if booking.is_student %}Applied{% else %}Not applied{% endif %}</strong>
+            </div>
+            <div class="account-row">
+                <span>Contact Phone</span>
+                <strong>{{ booking.contact_phone or booking.phone or '-' }}</strong>
+            </div>
+            <div class="account-row">
+                <span>Total</span>
+                <strong>&pound;{{ "%.2f"|format(booking.amount or 0) }}</strong>
+            </div>
+            {% if booking.available_for_update is defined %}
+            <div class="account-row">
+                <span>Seats Available</span>
+                <strong>{{ booking.available_for_update if booking.available_for_update is not none else 'Unlimited' }}</strong>
+            </div>
+            {% endif %}
+        </div>
 
-    <div class="form-group" style="margin-top: .75rem;">
-        <label style="display:flex; gap:.5rem; align-items:center;">
-            <input type="checkbox" name="is_student" {% if booking.is_student %}checked{% endif %} />
-            Student (10% discount)
-        </label>
-    </div>
+        <div class="account-divider"></div>
 
-    <div class="form-group" style="margin-top: .75rem;">
-        <label for="status">Status</label>
-        <select id="status" name="status" required>
-            {% for item in statuses %}
-                <option value="{{ item }}" {% if item == booking.status %}selected{% endif %}>{{ item }}</option>
-            {% endfor %}
-        </select>
-    </div>
+        <p class="admin-subtitle" style="margin-bottom: 0;">
+            Use the form on the right to update ticket count, student discount, or booking status. The receipt link below opens the customer-facing booking receipt.
+        </p>
+    </section>
 
-    <div style="display:flex; gap:.75rem; flex-wrap: wrap; margin-top: 1rem;">
-        <button type="submit" class="btn" style="width: auto;">Save Changes</button>
-        <a class="admin-link" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}">View Receipt</a>
-        <a class="btn" href="{{ url_for('admin_bookings') }}" style="width: auto; background: #2c3e50;">Cancel</a>
-    </div>
-</form>
+    <section class="receipt-card admin-booking-edit-card">
+        <h2>Edit Booking</h2>
+        <form method="POST" class="admin-form admin-booking-edit-form">
+            <div class="form-group">
+                <label for="tickets">Tickets</label>
+                <select id="tickets" name="tickets" required>
+                    {% for n in range(1, max_tickets + 1) %}
+                        <option value="{{ n }}" {% if n == booking.tickets %}selected{% endif %}>{{ n }}</option>
+                    {% endfor %}
+                </select>
+                <small style="display:block; margin-top:.35rem; opacity:.8;">Max 10 tickets per booking.</small>
+            </div>
 
-<form method="POST" action="{{ url_for('admin_delete_booking', booking_id=booking.booking_id) }}" onsubmit="return confirm('Delete this booking?');" style="margin-top: .75rem;">
-    <button type="submit" class="btn" style="width: auto; background: #b42318;">Delete Booking</button>
-</form>
+            <div class="form-group" style="margin-top: .75rem;">
+                <label class="student-discount-toggle">
+                    <span>Student (10% discount)</span>
+                    <input type="checkbox" name="is_student" {% if booking.is_student %}checked{% endif %} />
+                </label>
+            </div>
+
+            <div class="form-group" style="margin-top: .75rem;">
+                <label for="status">Status</label>
+                <select id="status" name="status" required>
+                    {% for item in statuses %}
+                        <option value="{{ item }}" {% if item == booking.status %}selected{% endif %}>{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="admin-booking-edit-actions">
+                <button type="submit" class="btn" style="width: auto;">Save Changes</button>
+                <a class="btn btn-soft" href="{{ url_for('admin_bookings') }}" style="width: auto;">Cancel</a>
+                <a class="btn btn-soft" href="{{ url_for('booking_receipt', booking_id=booking.booking_id) }}" style="width: auto;">View Receipt</a>
+            </div>
+        </form>
+
+        <div class="account-divider"></div>
+
+        <form method="POST" action="{{ url_for('admin_delete_booking', booking_id=booking.booking_id) }}" onsubmit="return confirm('Delete this booking?');">
+            <div class="admin-booking-delete">
+                <div>
+                    <h3 style="margin: 0 0 .25rem;">Delete booking</h3>
+                    <p class="admin-subtitle" style="margin: 0;">This permanently removes the booking and cannot be undone.</p>
+                </div>
+                <button type="submit" class="btn" style="width: auto; background: #b42318;">Delete Booking</button>
+            </div>
+        </form>
+    </section>
+</div>
 {% endblock %}

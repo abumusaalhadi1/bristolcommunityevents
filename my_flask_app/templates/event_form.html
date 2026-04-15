@@ -8,8 +8,16 @@
     <a class="btn" href="{{ url_for('admin_events') }}" style="width: auto; background: #2c3e50;">Back</a>
 </div>
 
+{% if event and event.event_id %}
+<div class="booking-current-event" style="margin-bottom: 1rem;">
+    <strong>Current availability</strong>
+    <p>Booked tickets: {{ event.booked_tickets or 0 }}</p>
+    <p>Remaining seats: {{ event.remaining_seats if event.remaining_seats is not none else 'Unlimited' }}</p>
+</div>
+{% endif %}
+
 <div class="auth-container" style="margin: 1rem auto 0;">
-    <form method="POST" action="{{ action_url }}">
+    <form method="POST" action="{{ action_url }}" enctype="multipart/form-data">
         <div class="form-group">
             <label for="event_name">Event Name *</label>
             <input type="text" id="event_name" name="event_name" value="{{ event.event_name|default('', true) }}" required />
@@ -26,16 +34,73 @@
         </div>
 
         <div class="form-group">
+            <label for="event_end_date">Event End Date</label>
+            <input type="date" id="event_end_date" name="event_end_date" value="{{ event.event_end_date.strftime('%Y-%m-%d') if event.event_end_date else '' }}" />
+            <small>Leave this blank for a one-day event. Multi-day events spread the total price across the full event run.</small>
+        </div>
+
+        <div class="form-group">
             <label for="price">Price (&pound;)</label>
             <input type="number" id="price" name="price" min="0" step="0.01" value="{{ event.price if event.price is not none else '' }}" />
             <small>Leave empty or 0 for free events.</small>
         </div>
 
         <div class="form-group">
-            <label for="event_capacity">Capacity</label>
-            <input type="number" id="event_capacity" name="event_capacity" min="1" max="10000" step="1" value="{{ event.event_capacity if event.event_capacity is not none else '' }}" />
-            <small>Optional. Leave empty for no set limit.</small>
+            <label for="event_cost">Event Cost (&pound;) *</label>
+            <input type="number" id="event_cost" name="event_cost" min="0" step="0.01" value="{{ event.event_cost if event.event_cost is not none else '' }}" required />
+            <small>Include venue, staff, and logistics costs. Use 0 for free events.</small>
         </div>
+
+        <div class="form-group">
+            <label for="event_capacity">Available Seats / Ticket Limit</label>
+            <input type="number" id="event_capacity" name="event_capacity" min="1" max="10000" step="1" value="{{ event.event_capacity if event.event_capacity is not none else '' }}" />
+            <small>Update the total seats or ticket cap for this event. Existing bookings are counted automatically.</small>
+        </div>
+
+        <div class="form-group">
+            <label for="conditions">Conditions</label>
+            <textarea id="conditions" name="conditions" placeholder="Age limits, accessibility notes, dress code, entry conditions, etc.">{{ event.conditions|default('', true) }}</textarea>
+        </div>
+
+        {% if event and event.event_id %}
+        {% set event_images = [
+            url_for('static', filename='images/event/event-card-1.jpg'),
+            url_for('static', filename='images/event/event-card-2.jpg'),
+            url_for('static', filename='images/event/event-card-3.jpg'),
+            url_for('static', filename='images/event/event-card-4.jpg'),
+            url_for('static', filename='images/event/event-card-5.jpg'),
+            url_for('static', filename='images/event/event-card-6.jpg'),
+            url_for('static', filename='images/event/event-card-7.jpg')
+        ] %}
+        {% set fallback_image = event_images[(event.event_id - 1) % (event_images|length)] %}
+        {% set preview_image = event.image_url or fallback_image %}
+        <div class="form-group">
+            <label>{% if event.image_url %}Current Image{% else %}Image Preview{% endif %}</label>
+            <div class="event-card" style="max-width: 420px; margin-top: .5rem;">
+                <div class="event-image" style="min-height: 180px; background-image: url('{{ preview_image }}');">
+                    <span style="position: relative; z-index: 1;">{{ event.event_name or 'Event image' }}</span>
+                </div>
+            </div>
+            {% if event.image_url %}
+                <small>Upload a new image below to replace it, or remove it if you want to clear the current image.</small>
+            {% else %}
+                <small>This event is using the default preview image. Upload a new image below to give it a custom one.</small>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="form-group">
+            <label for="image_file">Event Image</label>
+            <input type="file" id="image_file" name="image_file" accept="image/*" />
+            <small>Optional. Images are saved with the other event images and displayed in the same card format.</small>
+        </div>
+
+        {% if event and event.event_id and event.image_url %}
+        <div class="form-group" style="display:flex; align-items:center; gap:.6rem;">
+            <label for="remove_image" style="margin:0;">Remove current image</label>
+            <input type="checkbox" id="remove_image" name="remove_image" value="1" />
+        </div>
+        {% endif %}
 
         <div class="form-group">
             <label for="venue_id">Venue *</label>

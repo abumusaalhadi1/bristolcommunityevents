@@ -33,6 +33,25 @@
         return form ? form.querySelector('[name="is_student"]') : null;
     }
 
+    function syncStudentDisclaimerToggle(checkbox) {
+        if (!checkbox) return;
+
+        const formGroup = checkbox.closest('.form-group');
+        const disclaimer = formGroup ? formGroup.querySelector('[data-student-disclaimer]') : null;
+        if (disclaimer) {
+            disclaimer.hidden = !checkbox.checked;
+        }
+    }
+
+    function initStudentDisclaimerToggles() {
+        document.querySelectorAll('input[data-student-disclaimer-checkbox]').forEach((checkbox) => {
+            syncStudentDisclaimerToggle(checkbox);
+            checkbox.addEventListener('change', function () {
+                syncStudentDisclaimerToggle(this);
+            });
+        });
+    }
+
     function readFormEventData() {
         if (!form || !form.dataset.eventName) {
             return null;
@@ -236,6 +255,7 @@
         const bookingDays = Number.isFinite(rawBookingDays) && rawBookingDays > 0 ? rawBookingDays : 0;
         const isStudentField = getStudentField();
         const isStudent = Boolean(isStudentField && isStudentField.checked);
+        syncStudentDisclaimerToggle(isStudentField);
         const eventStartDate = form.dataset.eventStartDate || '';
         const bookingDateText = form.dataset.bookingDatetime || '';
         const perDayPrice = eventDuration > 1 ? basePrice / eventDuration : basePrice;
@@ -319,6 +339,8 @@
 
         return isValid;
     }
+
+    initStudentDisclaimerToggles();
 
     if (form && proceedBtn) {
         const refreshBookingUi = (showErrors = true) => {

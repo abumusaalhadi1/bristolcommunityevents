@@ -9,10 +9,16 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 from html import escape as html_escape
+from email.message import EmailMessage
 from pathlib import Path
+import hashlib
 import re
+import secrets
+import smtplib
+import ssl
 import textwrap
 import colorsys
+from uuid import uuid4
 
 import mysql.connector
 from flask import (
@@ -28,19 +34,36 @@ from flask import (
     url_for,
 )
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 from config import (
     DEFAULT_ADMIN_EMAIL,
     DEFAULT_ADMIN_NAME,
     DEFAULT_ADMIN_PASSWORD,
+    MAIL_DEFAULT_SENDER,
+    MAIL_PASSWORD,
+    MAIL_PORT,
+    MAIL_SERVER,
+    MAIL_SUPPRESS_SEND,
+    MAIL_USE_SSL,
+    MAIL_USE_TLS,
+    MAIL_USERNAME,
+    PUBLIC_APP_URL,
     SECRET_KEY,
 )
 from dbfunc import get_db_connection
-from receipt import booking_receipt_reference, build_booking_receipt_pdf as _build_booking_receipt_pdf
+from receipt import (
+    STUDENT_ID_DISCLAIMER,
+    booking_receipt_reference,
+    build_booking_receipt_pdf as _build_booking_receipt_pdf,
+)
 from seed_data import DEFAULT_CATEGORIES, DEFAULT_EVENTS, DEFAULT_REVIEWS, DEFAULT_VENUES
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+VENUE_IMAGE_DIR = Path(__file__).resolve().parent / "static" / "images" / "venue"
+EVENT_IMAGE_UPLOAD_DIR = Path(__file__).resolve().parent / "static" / "images" / "event" / "uploads"
+ALLOWED_EVENT_IMAGE_EXTENSIONS = {".gif", ".jpeg", ".jpg", ".png", ".webp"}
 
 # Core app constants and seed data are kept together for easier navigation.
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -61,6 +84,7 @@ WAITLIST_OFFER_HOLD_DAYS = 2
 EVENT_PRICE_REDUCTION_THRESHOLD = Decimal("0.25")
 EVENT_PRICE_REDUCTION_BOOKING_RATIO = Decimal("0.50")
 EVENT_PRICE_REDUCTION_LOOKBACK_DAYS = 10
+EVENT_COST_MARGIN = Decimal("0.15")
 REFUND_WINDOW_HOURS = 72
 REFUND_PROCESSING_WORKING_DAYS = 2
 ACTIVE_BOOKING_CONDITION = "COALESCE(status, 'Confirmed') <> 'Cancelled'"
@@ -92,6 +116,8 @@ REVIEW_STATUSES = (
     REVIEW_STATUS_APPROVED,
     REVIEW_STATUS_REJECTED,
 )
+PASSWORD_RESET_TOKEN_TTL_HOURS = 24
+PASSWORD_VERSION_SESSION_KEY = "auth_password_changed_at"
 
 _db_initialized = False
 
@@ -335,6 +361,13 @@ def to_money(value) -> Decimal:
         return Decimal("0.00")
 
 
+def event_cost_from_price(price) -> Decimal:
+    price_amount = to_money(price)
+    if price_amount <= 0:
+        return Decimal("0.00")
+    return (price_amount * EVENT_COST_MARGIN).quantize(Decimal("0.01"))
+
+
 def fetch_event_mix_counts(cursor, start_date, end_date):
     cursor.execute(
         """
@@ -558,6 +591,159 @@ def current_date():
     return current_datetime().date()
 
 
+def build_public_url(endpoint: str, **values) -> str:
+    path = url_for(endpoint, **values)
+    if PUBLIC_APP_URL:
+        return f"{PUBLIC_APP_URL.rstrip('/')}{path}"
+    return url_for(endpoint, _external=True, **values)
+
+
+def serialize_password_version(value):
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).isoformat(sep=" ")
+    if value is None:
+        return ""
+    return str(value)
+
+
+def clear_auth_session():
+    for key in ("user_id", "user_role", "user_name", PASSWORD_VERSION_SESSION_KEY):
+        session.pop(key, None)
+
+
+def password_reset_token_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def build_password_reset_email(user, reset_url: str, _expires_at) -> tuple[str, str]:
+    user_name = (user.get("full_name") or "there").strip() or "there"
+    body = textwrap.dedent(
+        f"""\
+        Dear {user_name},
+
+        A password reset request has been initiated for your account on Bristol Community Events.
+
+        To set a new password, please click the secure link below:
+
+        {reset_url}
+
+        This link will expire in {PASSWORD_RESET_TOKEN_TTL_HOURS} hours for security reasons.
+
+        If you did not request this password reset, please ignore this email. Your account will remain unchanged.
+
+        For any concerns, please contact our support team.
+
+        Kind regards,
+        Bristol Community Events Team
+        """
+    ).strip()
+    subject = "Reset your Bristol Community Events password"
+    return subject, body
+
+
+def send_email_message(subject: str, body: str, recipient_email: str):
+    if MAIL_SUPPRESS_SEND:
+        app.logger.info("MAIL_SUPPRESS_SEND is enabled; skipping email to %s", recipient_email)
+        app.logger.info("Email subject: %s", subject)
+        app.logger.info("Email body:\n%s", body)
+        return
+
+    if not MAIL_SERVER:
+        raise RuntimeError(
+            "Email is not configured. Set MAIL_SERVER and the related MAIL_* values before sending reset links."
+        )
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = MAIL_DEFAULT_SENDER or MAIL_USERNAME
+    message["To"] = recipient_email
+    message.set_content(body)
+
+    context = ssl.create_default_context()
+    if MAIL_USE_SSL:
+        with smtplib.SMTP_SSL(MAIL_SERVER, MAIL_PORT, timeout=10, context=context) as smtp:
+            smtp.ehlo()
+            if MAIL_USERNAME:
+                smtp.login(MAIL_USERNAME, MAIL_PASSWORD)
+            smtp.send_message(message)
+        return
+
+    with smtplib.SMTP(MAIL_SERVER, MAIL_PORT, timeout=10) as smtp:
+        smtp.ehlo()
+        if MAIL_USE_TLS:
+            smtp.starttls(context=context)
+            smtp.ehlo()
+        if MAIL_USERNAME:
+            smtp.login(MAIL_USERNAME, MAIL_PASSWORD)
+        smtp.send_message(message)
+
+
+def create_password_reset_request(cursor, user_id: int, requested_by: int | None):
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = password_reset_token_hash(raw_token)
+    now = current_datetime()
+    expires_at = now + timedelta(hours=PASSWORD_RESET_TOKEN_TTL_HOURS)
+
+    cursor.execute(
+        """
+        INSERT INTO password_reset_tokens (
+            user_id, token_hash, requested_by, created_at, expires_at
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (user_id, token_hash, requested_by, now, expires_at),
+    )
+    return raw_token, expires_at, token_hash
+
+
+def fetch_password_reset_request(cursor, token: str):
+    token_hash = password_reset_token_hash(token)
+    cursor.execute(
+        """
+        SELECT r.reset_token_id, r.user_id, r.token_hash, r.created_at, r.expires_at, r.used_at,
+               r.requested_by, u.full_name, u.email
+        FROM password_reset_tokens r
+        JOIN users u ON u.user_id = r.user_id
+        WHERE r.token_hash = %s
+        LIMIT 1
+        """,
+        (token_hash,),
+    )
+    return cursor.fetchone()
+
+
+def invalidate_password_reset_tokens(cursor, user_id: int):
+    cursor.execute(
+        """
+        UPDATE password_reset_tokens
+        SET used_at = %s
+        WHERE user_id = %s AND used_at IS NULL
+        """,
+        (current_datetime(), user_id),
+    )
+
+
+def invalidate_other_password_reset_tokens(cursor, user_id: int, keep_token_hash: str):
+    cursor.execute(
+        """
+        UPDATE password_reset_tokens
+        SET used_at = %s
+        WHERE user_id = %s AND token_hash <> %s AND used_at IS NULL
+        """,
+        (current_datetime(), user_id, keep_token_hash),
+    )
+
+
+def delete_password_reset_token(cursor, token_hash: str):
+    cursor.execute(
+        """
+        DELETE FROM password_reset_tokens
+        WHERE token_hash = %s
+        """,
+        (token_hash,),
+    )
+
+
 def build_initials(full_name: str) -> str:
     parts = [part for part in re.split(r"\s+", (full_name or "").strip()) if part]
     if not parts:
@@ -643,6 +829,76 @@ def lookup_category_id_by_name(cursor, category_name: str):
     )
     matches = cursor.fetchall()
     return matches[0]["category_id"] if len(matches) == 1 else None
+
+
+def normalize_optional_text(value, max_length=None):
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if max_length is not None:
+        return text[:max_length]
+    return text
+
+
+def local_static_image_filename(image_path):
+    image_path = normalize_optional_text(image_path, 500)
+    if not image_path or image_path.startswith("http"):
+        return None
+    if image_path.startswith("/static/"):
+        return image_path[len("/static/") :]
+    return image_path.lstrip("/")
+
+
+def venue_image_gallery(venue_name: str, *, limit: int = 4):
+    venue_name = (venue_name or "").strip().lower()
+    if not venue_name or not VENUE_IMAGE_DIR.exists():
+        return []
+
+    matches = []
+    for path in sorted(VENUE_IMAGE_DIR.iterdir(), key=lambda item: item.name.lower()):
+        if not path.is_file():
+            continue
+        stem = path.stem.strip().lower()
+        if stem == venue_name or stem.startswith(venue_name):
+            matches.append(f"images/venue/{path.name}")
+            if len(matches) >= limit:
+                break
+
+    return matches
+
+
+def merge_venue_into(cursor, source_name: str, target_name: str):
+    source_id = lookup_venue_id_by_name(cursor, source_name)
+    if not source_id:
+        return
+
+    target_id = lookup_venue_id_by_name(cursor, target_name)
+    if not target_id:
+        cursor.execute(
+            """
+            UPDATE venues
+            SET venue_name=%s
+            WHERE venue_id=%s
+            """,
+            (target_name, source_id),
+        )
+        return
+
+    if source_id == target_id:
+        return
+
+    cursor.execute(
+        """
+        UPDATE events
+        SET venue_id=%s
+        WHERE venue_id=%s
+        """,
+        (target_id, source_id),
+    )
+    cursor.execute("DELETE FROM venues WHERE venue_id=%s", (source_id,))
 
 
 def seed_default_reviews(cursor):
@@ -848,7 +1104,36 @@ def booking_booked_at_sql(alias="b"):
 
 def fetch_venues_and_categories(cursor):
     cursor.execute(
-        "SELECT venue_id, venue_name, address, city, capacity FROM venues ORDER BY venue_name"
+        """
+        SELECT venue_id, venue_name, address, city, suitable_for, image_url, capacity
+        FROM venues
+        ORDER BY
+            CASE
+                WHEN LOWER(venue_name) = 'ashton gate stadium' THEN 1
+                WHEN LOWER(venue_name) = 'arnolfini' THEN 2
+                WHEN LOWER(venue_name) = 'the bristol hippodrome' THEN 3
+                WHEN LOWER(venue_name) = 'bristol old vic' THEN 4
+                WHEN LOWER(venue_name) = 'bristol central library' THEN 5
+                WHEN LOWER(venue_name) = 'royal west of england academy' THEN 6
+                WHEN LOWER(venue_name) = 'uwe exhibition centre' THEN 7
+                WHEN LOWER(venue_name) IN ('creative space a', 'creative space b', 'community centre a') THEN 9
+                ELSE 8
+            END,
+            CASE
+                WHEN LOWER(venue_name) = 'creative space a' THEN 1
+                WHEN LOWER(venue_name) = 'creative space b' THEN 2
+                WHEN LOWER(venue_name) = 'community centre a' THEN 3
+                WHEN LOWER(venue_name) = 'ashton gate stadium'
+                  OR LOWER(venue_name) = 'arnolfini'
+                  OR LOWER(venue_name) = 'the bristol hippodrome'
+                  OR LOWER(venue_name) = 'bristol old vic'
+                  OR LOWER(venue_name) = 'bristol central library'
+                  OR LOWER(venue_name) = 'royal west of england academy'
+                  OR LOWER(venue_name) = 'uwe exhibition centre' THEN 0
+                ELSE -venue_id
+            END ASC,
+            venue_name ASC
+        """
     )
     venues = cursor.fetchall()
     cursor.execute(
@@ -868,8 +1153,10 @@ def fetch_venue_overview(cursor, *, venue_id=None, q="", limit=None, offset=None
 
     if q:
         like = f"%{q}%"
-        filters.append("(v.venue_name LIKE %s OR v.address LIKE %s OR v.city LIKE %s)")
-        params.extend([like, like, like])
+        filters.append(
+            "(v.venue_name LIKE %s OR v.address LIKE %s OR v.city LIKE %s OR v.suitable_for LIKE %s)"
+        )
+        params.extend([like, like, like, like])
 
     where_clause = " AND ".join(filters) if filters else "1=1"
     limit_clause = ""
@@ -880,7 +1167,7 @@ def fetch_venue_overview(cursor, *, venue_id=None, q="", limit=None, offset=None
 
     cursor.execute(
         f"""
-        SELECT v.venue_id, v.venue_name, v.address, v.city, v.capacity,
+        SELECT v.venue_id, v.venue_name, v.address, v.city, v.suitable_for, v.image_url, v.capacity,
                COALESCE(stats.total_events, 0) AS total_events,
                COALESCE(stats.upcoming_events, 0) AS upcoming_events,
                stats.next_event_date
@@ -894,7 +1181,8 @@ def fetch_venue_overview(cursor, *, venue_id=None, q="", limit=None, offset=None
             GROUP BY venue_id
         ) stats ON v.venue_id = stats.venue_id
         WHERE {where_clause}
-        ORDER BY v.venue_name ASC
+        ORDER BY
+            v.venue_id DESC
         {limit_clause}
         """,
         tuple(params),
@@ -907,6 +1195,12 @@ def fetch_venue_details(cursor, venue_id: int):
     venue = venues[0] if venues else None
     if not venue:
         return None, []
+
+    venue_images = venue_image_gallery(venue.get("venue_name"))
+    primary_image = local_static_image_filename(venue.get("image_url"))
+    if primary_image and primary_image not in venue_images:
+        venue_images = [primary_image] + venue_images
+    venue["venue_images"] = venue_images[:4]
 
     cursor.execute(
         """
@@ -991,6 +1285,8 @@ def create_venues_table(cursor):
             venue_name VARCHAR(150) NOT NULL,
             address VARCHAR(255) NULL,
             city VARCHAR(100) NULL,
+            suitable_for VARCHAR(255) NULL,
+            image_url VARCHAR(500) NULL,
             capacity INT NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
@@ -999,31 +1295,80 @@ def create_venues_table(cursor):
 
 def seed_default_venues(cursor):
     """Seed the demo venues used by the event fixtures."""
-    cursor.execute("SELECT venue_name FROM venues")
-    existing_venues = {
-        (row["venue_name"] or "").strip().lower()
-        for row in cursor.fetchall()
-        if row.get("venue_name")
-    }
+    cursor.execute("SELECT venue_id, venue_name FROM venues")
+    existing_venues = {}
+    for row in cursor.fetchall():
+        venue_name = normalize_optional_text(row.get("venue_name"), 150)
+        if not venue_name:
+            continue
+        existing_venues[venue_name.lower()] = row["venue_id"]
 
     for seed in DEFAULT_VENUES:
-        venue_name = (seed.get("venue_name") or "").strip()
-        if not venue_name or venue_name.lower() in existing_venues:
+        venue_name = normalize_optional_text(seed.get("venue_name"), 150)
+        if not venue_name:
             continue
 
-        cursor.execute(
-            """
-            INSERT INTO venues (venue_name, address, city, capacity)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (
-                venue_name[:150],
-                seed["address"][:255],
-                seed["city"][:100],
-                int(seed.get("capacity") or 0),
-            ),
+        venue_key = venue_name.lower()
+        address = normalize_optional_text(seed.get("address"), 255) if "address" in seed else None
+        city = normalize_optional_text(seed.get("city"), 100) if "city" in seed else None
+        suitable_for = (
+            normalize_optional_text(seed.get("suitable_for"), 255)
+            if "suitable_for" in seed
+            else None
         )
-        existing_venues.add(venue_name.lower())
+        image_url = (
+            normalize_optional_text(seed.get("image_url"), 500)
+            if "image_url" in seed
+            else None
+        )
+        capacity = int(seed.get("capacity") or 0)
+
+        if venue_key in existing_venues:
+            venue_id = existing_venues[venue_key]
+            update_parts = ["venue_name=%s"]
+            update_values = [venue_name]
+
+            if "address" in seed:
+                update_parts.append("address=%s")
+                update_values.append(address)
+            if "city" in seed:
+                update_parts.append("city=%s")
+                update_values.append(city)
+            if "suitable_for" in seed:
+                update_parts.append("suitable_for=%s")
+                update_values.append(suitable_for)
+            if "image_url" in seed:
+                update_parts.append("image_url=%s")
+                update_values.append(image_url)
+            if "capacity" in seed:
+                update_parts.append("capacity=%s")
+                update_values.append(capacity)
+
+            update_values.append(venue_id)
+            cursor.execute(
+                f"""
+                UPDATE venues
+                SET {', '.join(update_parts)}
+                WHERE venue_id=%s
+                """,
+                tuple(update_values),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO venues (venue_name, address, city, suitable_for, image_url, capacity)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    venue_name,
+                    address,
+                    city,
+                    suitable_for,
+                    image_url,
+                    capacity,
+                ),
+            )
+            existing_venues[venue_key] = cursor.lastrowid
 
 
 def seed_default_events(cursor):
@@ -1062,9 +1407,9 @@ def seed_default_events(cursor):
             """
             INSERT INTO events (
                 event_name, description, location, event_date, event_end_date, price,
-                venue_id, category_id, event_capacity, image_url
+                event_cost, venue_id, category_id, event_capacity, image_url
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 event_name[:255],
@@ -1073,6 +1418,7 @@ def seed_default_events(cursor):
                 event_date,
                 event_end_date,
                 to_money(seed.get("price")),
+                event_cost_from_price(seed.get("price")),
                 venue_id,
                 category_id,
                 int(seed.get("event_capacity") or 0),
@@ -1088,11 +1434,13 @@ def ensure_venues_table(cursor):
     else:
         add_column_if_missing(cursor, "venues", "address", "VARCHAR(255) NULL AFTER venue_name")
         add_column_if_missing(cursor, "venues", "city", "VARCHAR(100) NULL AFTER address")
+        add_column_if_missing(cursor, "venues", "suitable_for", "VARCHAR(255) NULL AFTER city")
+        add_column_if_missing(cursor, "venues", "image_url", "VARCHAR(500) NULL AFTER suitable_for")
         add_column_if_missing(
             cursor,
             "venues",
             "capacity",
-            "INT NOT NULL DEFAULT 0 AFTER city",
+            "INT NOT NULL DEFAULT 0 AFTER image_url",
         )
         cursor.execute(
             """
@@ -1110,6 +1458,10 @@ def ensure_venues_table(cursor):
         )
 
     seed_default_venues(cursor)
+    merge_venue_into(cursor, "Harbourside Gallery", "Harbourside Art Space")
+    merge_venue_into(cursor, "Harbourside Arts Hub", "Harbourside Art Space")
+    merge_venue_into(cursor, "Bristol Creative Wharf", "Harbourside Art Space")
+    merge_venue_into(cursor, "UWE Exhibition Hall", "UWE Exhibition Centre")
 
 
 def ensure_event_venue_foreign_key(cursor):
@@ -1530,6 +1882,45 @@ def ensure_newsletter_subscribers_table(cursor):
     )
 
 
+def create_password_reset_tokens_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            reset_token_id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            requested_by INT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL,
+            used_at DATETIME NULL,
+            UNIQUE KEY uq_password_reset_tokens_token_hash (token_hash),
+            KEY idx_password_reset_tokens_user_id (user_id),
+            KEY idx_password_reset_tokens_expires_at (expires_at),
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+            FOREIGN KEY (requested_by) REFERENCES users(user_id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def ensure_password_reset_tokens_table(cursor):
+    if not table_exists(cursor, "password_reset_tokens"):
+        create_password_reset_tokens_table(cursor)
+        return
+
+    add_column_if_missing(cursor, "password_reset_tokens", "user_id", "INT NOT NULL AFTER reset_token_id")
+    add_column_if_missing(cursor, "password_reset_tokens", "token_hash", "CHAR(64) NOT NULL AFTER user_id")
+    add_column_if_missing(cursor, "password_reset_tokens", "requested_by", "INT NULL AFTER token_hash")
+    add_column_if_missing(
+        cursor,
+        "password_reset_tokens",
+        "created_at",
+        "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER requested_by",
+    )
+    add_column_if_missing(cursor, "password_reset_tokens", "expires_at", "DATETIME NOT NULL AFTER created_at")
+    add_column_if_missing(cursor, "password_reset_tokens", "used_at", "DATETIME NULL AFTER expires_at")
+
+
 def seed_default_newsletter_subscribers(cursor):
     cursor.execute("SELECT COUNT(*) AS count FROM newsletter_subscribers")
     subscriber_count = cursor.fetchone()["count"] or 0
@@ -1567,6 +1958,47 @@ def seed_default_newsletter_subscribers(cursor):
         )
 
 
+def create_schema_migrations_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            migration_key VARCHAR(100) PRIMARY KEY,
+            applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def schema_migration_applied(cursor, migration_key: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM schema_migrations WHERE migration_key = %s",
+        (migration_key,),
+    )
+    return cursor.fetchone() is not None
+
+
+def mark_schema_migration_applied(cursor, migration_key: str):
+    cursor.execute(
+        "INSERT IGNORE INTO schema_migrations (migration_key) VALUES (%s)",
+        (migration_key,),
+    )
+
+
+def backfill_event_costs_from_price(cursor):
+    cursor.execute(
+        """
+        UPDATE events
+        SET event_cost = CASE
+            WHEN price IS NOT NULL AND price > 0 THEN ROUND(price * %s, 2)
+            ELSE 0
+        END
+        WHERE event_cost IS NULL
+           OR event_cost <= 0
+        """,
+        (EVENT_COST_MARGIN,),
+    )
+
+
 def initialize_database():
     """Apply lightweight migrations and seed demo data once per process."""
     global _db_initialized
@@ -1593,6 +2025,12 @@ def initialize_database():
             "VARCHAR(255) NULL AFTER event_cost",
         )
         add_column_if_missing(cursor, "users", "password_hash", "VARCHAR(255) NULL AFTER email")
+        add_column_if_missing(
+            cursor,
+            "users",
+            "password_changed_at",
+            "DATETIME NULL AFTER password_hash",
+        )
         add_column_if_missing(
             cursor,
             "users",
@@ -1677,6 +2115,7 @@ def initialize_database():
             "payment_source",
             "VARCHAR(255) NULL AFTER payment_method",
         )
+        create_schema_migrations_table(cursor)
         ensure_venues_table(cursor)
         seed_default_categories(cursor)
         seed_default_events(cursor)
@@ -1685,6 +2124,7 @@ def initialize_database():
         ensure_contact_messages_table(cursor)
         ensure_reviews_table(cursor)
         ensure_newsletter_subscribers_table(cursor)
+        ensure_password_reset_tokens_table(cursor)
 
         cursor.execute(
             """
@@ -1693,14 +2133,17 @@ def initialize_database():
             WHERE event_end_date IS NULL AND event_date IS NOT NULL
             """
         )
+        if not schema_migration_applied(cursor, "event_cost_backfill_from_price_v1"):
+            backfill_event_costs_from_price(cursor)
+            mark_schema_migration_applied(cursor, "event_cost_backfill_from_price_v1")
+        cursor.execute("UPDATE users SET role=%s WHERE role IS NULL OR role=''", (ROLE_USER,))
         cursor.execute(
             """
-            UPDATE events
-            SET event_cost = 0
-            WHERE event_cost IS NULL OR event_cost < 0
+            UPDATE users
+            SET password_changed_at = COALESCE(password_changed_at, created_at, CURRENT_TIMESTAMP)
+            WHERE password_changed_at IS NULL
             """
         )
-        cursor.execute("UPDATE users SET role=%s WHERE role IS NULL OR role=''", (ROLE_USER,))
         cursor.execute(
             "UPDATE bookings SET status='Confirmed' WHERE status IS NULL OR status=''"
         )
@@ -1750,7 +2193,7 @@ def initialize_database():
 def bootstrap_default_admin(cursor):
     cursor.execute(
         """
-        SELECT user_id, password_hash, role
+        SELECT user_id, password_hash, role, password_changed_at
         FROM users
         WHERE email = %s
         """,
@@ -1770,6 +2213,10 @@ def bootstrap_default_admin(cursor):
             updates.append("password_hash=%s")
             params.append(generate_password_hash(DEFAULT_ADMIN_PASSWORD))
 
+        if not admin_user.get("password_changed_at"):
+            updates.append("password_changed_at=%s")
+            params.append(current_datetime())
+
         if updates:
             cursor.execute(
                 f"UPDATE users SET {', '.join(updates)} WHERE user_id=%s",
@@ -1779,14 +2226,15 @@ def bootstrap_default_admin(cursor):
 
     cursor.execute(
         """
-        INSERT INTO users (full_name, email, phone, password_hash, role, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO users (full_name, email, phone, password_hash, password_changed_at, role, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         (
             DEFAULT_ADMIN_NAME,
             DEFAULT_ADMIN_EMAIL,
             "",
             generate_password_hash(DEFAULT_ADMIN_PASSWORD),
+            current_datetime(),
             ROLE_ADMIN,
             current_datetime(),
         ),
@@ -1804,7 +2252,7 @@ def load_current_user():
     cursor = conn.cursor(dictionary=True)
     cursor.execute(
         """
-        SELECT user_id, full_name, email, phone, role, created_at
+        SELECT user_id, full_name, email, phone, role, created_at, password_changed_at
         FROM users
         WHERE user_id = %s
         """,
@@ -1819,8 +2267,16 @@ def load_current_user():
         g.current_user = None
         return
 
+    session_version = session.get(PASSWORD_VERSION_SESSION_KEY)
+    current_version = serialize_password_version(user.get("password_changed_at"))
+    if session_version != current_version:
+        session.clear()
+        g.current_user = None
+        return
+
     session["user_role"] = user["role"]
     session["user_name"] = user["full_name"]
+    session[PASSWORD_VERSION_SESSION_KEY] = current_version
     g.current_user = user
 
 
@@ -1861,6 +2317,7 @@ def inject_template_globals():
         "is_admin": bool(current_user and current_user.get("role") == ROLE_ADMIN),
         "newsletter_subscribers": getattr(g, "newsletter_subscribers", []),
         "newsletter_subscriber_count": getattr(g, "newsletter_subscriber_count", 0),
+        "student_id_disclaimer": STUDENT_ID_DISCLAIMER,
     }
 
 
@@ -1899,6 +2356,14 @@ def booking_totals_join(alias="bt"):
     """
 
 
+def booking_revenue_total_sql(alias="b"):
+    return (
+        f"COALESCE(SUM(CASE WHEN COALESCE({alias}.status, 'Confirmed') <> 'Cancelled' "
+        f"THEN GREATEST(COALESCE({alias}.subtotal_amount, 0) - COALESCE({alias}.discount_applied, 0), 0) "
+        f"ELSE 0 END), 0)"
+    )
+
+
 def build_pagination_pages(current_page: int, total_pages: int, window: int = 2):
     if total_pages <= 7:
         return list(range(1, total_pages + 1))
@@ -1920,6 +2385,45 @@ def build_pagination_pages(current_page: int, total_pages: int, window: int = 2)
         pages.append(total_pages)
 
     return pages
+
+
+def is_allowed_event_image_filename(filename: str) -> bool:
+    return Path(filename).suffix.lower() in ALLOWED_EVENT_IMAGE_EXTENSIONS
+
+
+def save_event_image_upload(uploaded_file):
+    filename = secure_filename(uploaded_file.filename or "")
+    if not filename:
+        raise ValueError("Please choose an image file.")
+    if not is_allowed_event_image_filename(filename):
+        raise ValueError("Please upload a JPG, JPEG, PNG, GIF, or WebP image.")
+
+    EVENT_IMAGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid4().hex}{Path(filename).suffix.lower()}"
+    file_path = EVENT_IMAGE_UPLOAD_DIR / stored_name
+    uploaded_file.save(str(file_path))
+    return f"/static/images/event/uploads/{stored_name}"
+
+
+def remove_uploaded_event_image(image_url):
+    image_url = (image_url or "").strip()
+    if not image_url:
+        return
+
+    relative_path = image_url[len("/static/") :] if image_url.startswith("/static/") else image_url.lstrip("/")
+    if not relative_path.startswith("images/event/uploads/"):
+        return
+
+    file_name = Path(relative_path).name
+    if not file_name:
+        return
+
+    file_path = EVENT_IMAGE_UPLOAD_DIR / file_name
+    try:
+        if file_path.exists() and file_path.is_file():
+            file_path.unlink()
+    except OSError:
+        pass
 
 
 def fetch_event(cursor, event_id: int):
@@ -2354,6 +2858,12 @@ def payment_status_for_booking(status: str) -> str:
     return "Paid"
 
 
+def payment_status_for_cancellation(refund_amount) -> str:
+    if refund_amount > 0:
+        return "Refund Approved"
+    return "Cancellation Charge"
+
+
 
 def build_booking_receipt_pdf(booking):
     """Delegate PDF rendering to the receipt helper module."""
@@ -2464,10 +2974,7 @@ def fetch_event_listing(
         LEFT JOIN categories c ON e.category_id = c.category_id
         {booking_totals_join()}
         WHERE {where_clause}
-        ORDER BY
-            CASE WHEN e.event_date >= CURDATE() THEN 0 ELSE 1 END,
-            CASE WHEN e.event_date >= CURDATE() THEN e.event_date END ASC,
-            CASE WHEN e.event_date < CURDATE() THEN e.event_date END DESC
+        ORDER BY e.event_id DESC
         {limit_clause}
         """,
         tuple(params),
@@ -3014,7 +3521,7 @@ def admin_events():
         LEFT JOIN categories c ON e.category_id = c.category_id
         {booking_totals_join()}
         WHERE {where_clause}
-        ORDER BY e.event_date DESC, e.event_id DESC
+        ORDER BY e.event_id DESC, e.event_date DESC
         """,
         tuple(params),
     )
@@ -3094,6 +3601,8 @@ def add_event():
         event_capacity = parse_capacity(capacity_raw)
         venue_id_raw = request.form.get("venue_id")
         category_id_raw = request.form.get("category_id")
+        image_file = request.files.get("image_file")
+        image_file_name = secure_filename(image_file.filename or "") if image_file and image_file.filename else ""
 
         try:
             venue_id = int(venue_id_raw)
@@ -3132,9 +3641,12 @@ def add_event():
             flash("Event date cannot be in the past.", "error")
         elif event_end_date and event_end_date < event_date:
             flash("Event end date cannot be before the start date.", "error")
+        elif image_file_name and not is_allowed_event_image_filename(image_file_name):
+            flash("Please upload a JPG, JPEG, PNG, GIF, or WebP image.", "error")
         else:
             conn = get_db_connection()
             cursor = conn.cursor(dictionary=True)
+            saved_image_url = None
             try:
                 if not venue_exists(cursor, venue_id) or not category_exists(
                     cursor, category_id
@@ -3155,13 +3667,16 @@ def add_event():
                             "error",
                         )
                     else:
+                        if image_file_name:
+                            saved_image_url = save_event_image_upload(image_file)
+
                         cursor.execute(
                             """
                             INSERT INTO events (
                                 event_name, event_date, event_end_date, location, conditions, price,
-                                event_cost, venue_id, category_id, event_capacity
+                                event_cost, venue_id, category_id, event_capacity, image_url
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 event_name,
@@ -3174,13 +3689,21 @@ def add_event():
                                 venue_id,
                                 category_id,
                                 event_capacity,
+                                saved_image_url,
                             ),
                         )
                         conn.commit()
                         flash("Event added successfully.", "success")
                         return redirect(url_for("admin_events"))
+            except (OSError, ValueError) as err:
+                conn.rollback()
+                if saved_image_url:
+                    remove_uploaded_event_image(saved_image_url)
+                flash(str(err), "error")
             except mysql.connector.Error as err:
                 conn.rollback()
+                if saved_image_url:
+                    remove_uploaded_event_image(saved_image_url)
                 flash(f"Database error: {err}", "error")
             finally:
                 cursor.close()
@@ -3208,8 +3731,7 @@ def update_event(event_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("SELECT * FROM events WHERE event_id=%s", (event_id,))
-    event = cursor.fetchone()
+    event = fetch_event(cursor, event_id)
     if not event:
         cursor.close()
         conn.close()
@@ -3227,6 +3749,10 @@ def update_event(event_id):
         event_end_date = parse_event_date(request.form.get("event_end_date"))
         conditions = request.form.get("conditions", "").strip()
         event_cost = parse_price(request.form.get("event_cost"))
+        image_file = request.files.get("image_file")
+        image_file_name = secure_filename(image_file.filename or "") if image_file and image_file.filename else ""
+        remove_image = request.form.get("remove_image") == "1"
+        current_image_url = event.get("image_url")
 
         try:
             venue_id = int(venue_id_raw)
@@ -3252,7 +3778,10 @@ def update_event(event_id):
             flash("Event date cannot be in the past.", "error")
         elif event_end_date and event_end_date < event_date:
             flash("Event end date cannot be before the start date.", "error")
+        elif image_file_name and not is_allowed_event_image_filename(image_file_name):
+            flash("Please upload a JPG, JPEG, PNG, GIF, or WebP image.", "error")
         else:
+            saved_image_url = None
             try:
                 if not venue_exists(cursor, venue_id) or not category_exists(
                     cursor, category_id
@@ -3273,11 +3802,19 @@ def update_event(event_id):
                             "error",
                         )
                     else:
+                        if image_file_name:
+                            saved_image_url = save_event_image_upload(image_file)
+
+                        image_url = (
+                            saved_image_url
+                            if saved_image_url is not None
+                            else (None if remove_image else current_image_url)
+                        )
                         cursor.execute(
                             """
                             UPDATE events
                             SET event_name=%s, event_date=%s, event_end_date=%s, location=%s, conditions=%s,
-                                price=%s, event_cost=%s, venue_id=%s, category_id=%s, event_capacity=%s
+                                price=%s, event_cost=%s, venue_id=%s, category_id=%s, event_capacity=%s, image_url=%s
                             WHERE event_id=%s
                             """,
                             (
@@ -3291,16 +3828,30 @@ def update_event(event_id):
                                 venue_id,
                                 category_id,
                                 event_capacity,
+                                image_url,
                                 event_id,
                             ),
                         )
+                        waitlist_offers = promote_waitlist_entries(cursor, conn, event_id)
                         conn.commit()
-                        flash("Event updated successfully.", "success")
+                        if current_image_url and current_image_url != image_url:
+                            remove_uploaded_event_image(current_image_url)
+                        success_message = "Event updated successfully."
+                        if waitlist_offers:
+                            success_message += f" {len(waitlist_offers)} waitlist offer(s) were issued for available seats."
+                        flash(success_message, "success")
                         cursor.close()
                         conn.close()
                         return redirect(url_for("admin_events"))
+            except (OSError, ValueError) as err:
+                conn.rollback()
+                if saved_image_url:
+                    remove_uploaded_event_image(saved_image_url)
+                flash(str(err), "error")
             except mysql.connector.Error as err:
                 conn.rollback()
+                if saved_image_url:
+                    remove_uploaded_event_image(saved_image_url)
                 flash(f"Database error: {err}", "error")
 
         event.update(
@@ -4076,13 +4627,49 @@ def my_bookings():
     return render_template("my_bookings.html", bookings=bookings)
 
 
+def delete_user_account(cursor, user_id: int):
+    cursor.execute(
+        """
+        SELECT DISTINCT event_id
+        FROM bookings
+        WHERE user_id = %s
+          AND COALESCE(status, 'Confirmed') <> 'Cancelled'
+        """,
+        (user_id,),
+    )
+    active_event_ids = [row["event_id"] for row in cursor.fetchall()]
+
+    cursor.execute(
+        """
+        UPDATE reviews
+        SET user_id = NULL,
+            author_name = %s,
+            author_initials = %s
+        WHERE user_id = %s
+        """,
+        ("Deleted user", "DU", user_id),
+    )
+    cursor.execute(
+        """
+        DELETE p
+        FROM payments p
+        INNER JOIN bookings b ON b.booking_id = p.booking_id
+        WHERE b.user_id = %s
+        """,
+        (user_id,),
+    )
+    cursor.execute("DELETE FROM bookings WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+    return active_event_ids
+
+
 @login_required
 def account():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(
         """
-        SELECT user_id, full_name, email, phone, role, created_at, password_hash
+        SELECT user_id, full_name, email, phone, role, created_at, password_hash, password_changed_at
         FROM users
         WHERE user_id = %s
         """,
@@ -4137,19 +4724,43 @@ def account():
                 elif new_password != confirm_password:
                     flash("Passwords do not match.", "error")
                 else:
+                    password_changed_at = current_datetime()
                     cursor.execute(
                         """
                         UPDATE users
-                        SET password_hash=%s
+                        SET password_hash=%s, password_changed_at=%s
                         WHERE user_id=%s
                         """,
-                        (generate_password_hash(new_password), account_user["user_id"]),
+                        (generate_password_hash(new_password), password_changed_at, account_user["user_id"]),
                     )
+                    invalidate_password_reset_tokens(cursor, account_user["user_id"])
                     conn.commit()
+                    session[PASSWORD_VERSION_SESSION_KEY] = serialize_password_version(password_changed_at)
                     flash("Password changed successfully.", "success")
                     cursor.close()
                     conn.close()
                     return redirect(url_for("account"))
+            elif action == "delete_account":
+                delete_password = request.form.get("delete_password", "").strip()
+
+                if not delete_password:
+                    flash("Please enter your current password to delete your account.", "error")
+                elif not password_hash or not check_password_hash(password_hash, delete_password):
+                    flash("Current password is incorrect.", "error")
+                else:
+                    try:
+                        active_event_ids = delete_user_account(cursor, account_user["user_id"])
+                        for event_id in active_event_ids:
+                            promote_waitlist_entries(cursor, conn, event_id)
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                        session.clear()
+                        flash("Your account has been deleted.", "success")
+                        return redirect(url_for("login"))
+                    except mysql.connector.Error as err:
+                        conn.rollback()
+                        flash(f"Database error: {err}", "error")
             else:
                 flash("Invalid account action.", "error")
         except mysql.connector.Error as err:
@@ -4533,9 +5144,7 @@ def cancel_booking(booking_id):
         )
         cancellation_charge = cancellation["cancellation_charge"]
         refund_amount = cancellation["refund_amount"]
-        payment_status = (
-            "Refund Approved" if refund_amount > 0 else "Cancellation Charge Applied"
-        )
+        payment_status = payment_status_for_cancellation(refund_amount)
 
         cursor.execute(
             """
@@ -4616,19 +5225,26 @@ def admin_dashboard():
     tickets_total = cursor.fetchone()["total"] or 0
 
     cursor.execute(
-        """
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM payments
-        WHERE COALESCE(payment_status, 'Paid') = 'Paid'
+        f"""
+        SELECT {booking_revenue_total_sql()} AS total
+        FROM bookings b
         """
     )
     revenue_total = cursor.fetchone()["total"] or 0
+
+    cursor.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(event_cost, 0)), 0) AS total
+        FROM events
+        """
+    )
+    cost_total = cursor.fetchone()["total"] or 0
+    profit_total = to_money(revenue_total) - to_money(cost_total)
 
     messages_count = count_contact_messages(cursor)
     new_messages_count = count_contact_messages(cursor, status="New")
     reviews_count = count_reviews(cursor)
     pending_reviews_count = count_reviews(cursor, status=REVIEW_STATUS_PENDING)
-    approved_reviews_count = count_reviews(cursor, status=REVIEW_STATUS_APPROVED)
 
     cursor.execute(
         f"""
@@ -4661,13 +5277,14 @@ def admin_dashboard():
         bookings_count=bookings_count,
         tickets_total=tickets_total,
         revenue_total=revenue_total,
+        cost_total=cost_total,
+        profit_total=profit_total,
         recent_bookings=recent_bookings,
         messages_count=messages_count,
         new_messages_count=new_messages_count,
         recent_messages=recent_messages,
         reviews_count=reviews_count,
         pending_reviews_count=pending_reviews_count,
-        approved_reviews_count=approved_reviews_count,
         recent_reviews=recent_reviews,
     )
 
@@ -4739,7 +5356,32 @@ def admin_reports():
         """
         SELECT venue_id, venue_name, city, capacity
         FROM venues
-        ORDER BY venue_name ASC
+        ORDER BY
+            CASE
+                WHEN LOWER(venue_name) = 'ashton gate stadium' THEN 1
+                WHEN LOWER(venue_name) = 'arnolfini' THEN 2
+                WHEN LOWER(venue_name) = 'the bristol hippodrome' THEN 3
+                WHEN LOWER(venue_name) = 'bristol old vic' THEN 4
+                WHEN LOWER(venue_name) = 'bristol central library' THEN 5
+                WHEN LOWER(venue_name) = 'royal west of england academy' THEN 6
+                WHEN LOWER(venue_name) = 'uwe exhibition centre' THEN 7
+                WHEN LOWER(venue_name) IN ('creative space a', 'creative space b', 'community centre a') THEN 9
+                ELSE 8
+            END,
+            CASE
+                WHEN LOWER(venue_name) = 'creative space a' THEN 1
+                WHEN LOWER(venue_name) = 'creative space b' THEN 2
+                WHEN LOWER(venue_name) = 'community centre a' THEN 3
+                WHEN LOWER(venue_name) = 'ashton gate stadium'
+                  OR LOWER(venue_name) = 'arnolfini'
+                  OR LOWER(venue_name) = 'the bristol hippodrome'
+                  OR LOWER(venue_name) = 'bristol old vic'
+                  OR LOWER(venue_name) = 'bristol central library'
+                  OR LOWER(venue_name) = 'royal west of england academy'
+                  OR LOWER(venue_name) = 'uwe exhibition centre' THEN 0
+                ELSE -venue_id
+            END ASC,
+            venue_name ASC
         """
     )
     report_venues = cursor.fetchall()
@@ -4779,14 +5421,13 @@ def admin_reports():
             event_report = cursor.fetchone()
             if event_report:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT
                         COUNT(*) AS bookings_count,
                         COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN b.tickets ELSE 0 END), 0) AS tickets_sold,
-                        COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN p.amount ELSE 0 END), 0) AS revenue_total,
+                        {booking_revenue_total_sql()} AS revenue_total,
                         COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') = 'Cancelled' THEN 1 ELSE 0 END), 0) AS cancelled_bookings
                     FROM bookings b
-                    LEFT JOIN payments p ON p.booking_id = b.booking_id
                     WHERE b.event_id = %s
                     """,
                     (event_id,),
@@ -4815,7 +5456,7 @@ def admin_reports():
             venue_id = None
         if venue_id:
             cursor.execute(
-                """
+                f"""
                 SELECT v.venue_id, v.venue_name, v.address, v.city, v.capacity,
                        COALESCE(stats.total_events, 0) AS total_events,
                        COALESCE(stats.upcoming_events, 0) AS upcoming_events,
@@ -4833,7 +5474,7 @@ def admin_reports():
                                    THEN 1 ELSE 0
                                END
                            ) AS fully_booked_events,
-                           COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN p.amount ELSE 0 END), 0) AS revenue_total
+                           {booking_revenue_total_sql()} AS revenue_total
                     FROM events e
                     LEFT JOIN (
                         SELECT event_id, SUM(tickets) AS booked_tickets
@@ -4842,7 +5483,6 @@ def admin_reports():
                         GROUP BY event_id
                     ) bt ON e.event_id = bt.event_id
                     LEFT JOIN bookings b ON b.event_id = e.event_id
-                    LEFT JOIN payments p ON p.booking_id = b.booking_id
                     GROUP BY e.venue_id
                 ) stats ON v.venue_id = stats.venue_id
                 WHERE v.venue_id = %s
@@ -4874,21 +5514,32 @@ def admin_reports():
                 venue_report["events"] = [enrich_booking_event(event) for event in cursor.fetchall()]
 
     cursor.execute(
-        """
+        f"""
         SELECT
             COUNT(DISTINCT CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN e.event_id END) AS successful_events_count,
             COUNT(DISTINCT e.event_id) AS total_events_in_year,
-            COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN p.amount ELSE 0 END), 0) AS revenue_total,
+            {booking_revenue_total_sql()} AS revenue_total,
             COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN b.tickets ELSE 0 END), 0) AS tickets_sold
         FROM events e
         LEFT JOIN bookings b ON b.event_id = e.event_id
-        LEFT JOIN payments p ON p.booking_id = b.booking_id
         WHERE YEAR(e.event_date) = %s
         """,
         (selected_year,),
     )
     year_report = cursor.fetchone() or {}
     year_report["selected_year"] = selected_year
+    cursor.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(event_cost, 0)), 0) AS total
+        FROM events
+        WHERE YEAR(event_date) = %s
+        """,
+        (selected_year,),
+    )
+    year_report["cost_total"] = cursor.fetchone()["total"] or 0
+    year_report["profit_total"] = to_money(year_report.get("revenue_total")) - to_money(
+        year_report.get("cost_total")
+    )
     year_report["fully_booked_events_count"] = 0
     cursor.execute(
         """
@@ -4975,6 +5626,8 @@ def add_venue():
         venue_name = request.form.get("venue_name", "").strip()
         address = request.form.get("address", "").strip()
         city = request.form.get("city", "").strip()
+        suitable_for = request.form.get("suitable_for", "").strip()
+        image_url = request.form.get("image_url", "").strip()
         capacity_raw = request.form.get("capacity", "").strip()
 
         try:
@@ -4986,6 +5639,8 @@ def add_venue():
             "venue_name": venue_name,
             "address": address,
             "city": city,
+            "suitable_for": suitable_for,
+            "image_url": image_url,
             "capacity": capacity,
         }
 
@@ -5002,13 +5657,15 @@ def add_venue():
                 else:
                     cursor.execute(
                         """
-                        INSERT INTO venues (venue_name, address, city, capacity)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO venues (venue_name, address, city, suitable_for, image_url, capacity)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         """,
                         (
                             venue_name[:150],
                             address[:255] or None,
                             city[:100] or None,
+                            suitable_for[:255] or None,
+                            image_url[:500] or None,
                             capacity,
                         ),
                     )
@@ -5049,6 +5706,8 @@ def update_venue(venue_id):
             venue_name = request.form.get("venue_name", "").strip()
             address = request.form.get("address", "").strip()
             city = request.form.get("city", "").strip()
+            suitable_for = request.form.get("suitable_for", "").strip()
+            image_url = request.form.get("image_url", "").strip()
             capacity_raw = request.form.get("capacity", "").strip()
 
             try:
@@ -5068,13 +5727,15 @@ def update_venue(venue_id):
                         cursor.execute(
                             """
                             UPDATE venues
-                            SET venue_name=%s, address=%s, city=%s, capacity=%s
+                            SET venue_name=%s, address=%s, city=%s, suitable_for=%s, image_url=%s, capacity=%s
                             WHERE venue_id=%s
                             """,
                             (
                                 venue_name[:150],
                                 address[:255] or None,
                                 city[:100] or None,
+                                suitable_for[:255] or None,
+                                image_url[:500] or None,
                                 capacity,
                                 venue_id,
                             ),
@@ -5091,6 +5752,8 @@ def update_venue(venue_id):
                     "venue_name": venue_name,
                     "address": address,
                     "city": city,
+                    "suitable_for": suitable_for,
+                    "image_url": image_url,
                     "capacity": capacity,
                 }
             )
@@ -5509,9 +6172,7 @@ def admin_edit_booking(booking_id):
             )
             cancellation_charge = cancellation_preview["cancellation_charge"]
             refund_amount = cancellation_preview["refund_amount"]
-            payment_status = (
-                "Refund Approved" if refund_amount > 0 else "Cancellation Charge Applied"
-            )
+            payment_status = payment_status_for_cancellation(refund_amount)
 
         try:
             cursor.execute(
@@ -5629,6 +6290,51 @@ def admin_delete_booking(booking_id):
 
 
 @admin_required
+def admin_delete_user(user_id):
+    next_url = get_safe_next_url() or url_for("admin_users")
+    self_deleted = bool(g.current_user and g.current_user.get("user_id") == user_id)
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        """
+        SELECT user_id, full_name, email, role
+        FROM users
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    try:
+        active_event_ids = delete_user_account(cursor, user_id)
+        for event_id in active_event_ids:
+            promote_waitlist_entries(cursor, conn, event_id)
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if self_deleted:
+            session.clear()
+            flash("Your account has been deleted.", "success")
+            return redirect(url_for("login"))
+
+        flash("User account deleted.", "success")
+        return redirect(next_url)
+    except mysql.connector.Error as err:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        flash(f"Database error: {err}", "error")
+        return redirect(next_url)
+
+
+@admin_required
 def admin_users():
     q = request.args.get("q", "").strip()
     filters = []
@@ -5667,11 +6373,12 @@ def admin_users():
 
 @admin_required
 def admin_reset_user_password(user_id):
+    next_url = get_safe_next_url() or url_for("admin_users")
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(
         """
-        SELECT user_id, full_name, email, role
+        SELECT user_id, full_name, email, role, password_changed_at
         FROM users
         WHERE user_id = %s
         """,
@@ -5694,19 +6401,23 @@ def admin_reset_user_password(user_id):
             flash("Passwords do not match.", "error")
         else:
             try:
+                password_changed_at = current_datetime()
                 cursor.execute(
                     """
                     UPDATE users
-                    SET password_hash=%s
+                    SET password_hash=%s, password_changed_at=%s
                     WHERE user_id=%s
                     """,
-                    (generate_password_hash(new_password), user_id),
+                    (generate_password_hash(new_password), password_changed_at, user_id),
                 )
+                invalidate_password_reset_tokens(cursor, user_id)
                 conn.commit()
+                if g.current_user and g.current_user.get("user_id") == user_id:
+                    session[PASSWORD_VERSION_SESSION_KEY] = serialize_password_version(password_changed_at)
                 flash("User password updated successfully.", "success")
                 cursor.close()
                 conn.close()
-                return redirect(url_for("admin_users"))
+                return redirect(next_url)
             except mysql.connector.Error as err:
                 conn.rollback()
                 flash(f"Database error: {err}", "error")
@@ -5714,6 +6425,82 @@ def admin_reset_user_password(user_id):
     cursor.close()
     conn.close()
     return render_template("admin/user_password_form.html", user=user)
+
+
+@admin_required
+def admin_send_user_password_reset_email(user_id):
+    next_url = get_safe_next_url() or url_for("admin_reset_user_password", user_id=user_id)
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        """
+        SELECT user_id, full_name, email, role
+        FROM users
+        WHERE user_id = %s
+        """,
+        (user_id,),
+    )
+    user = cursor.fetchone()
+
+    if not user:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    email = (user.get("email") or "").strip().lower()
+    if not is_valid_email(email):
+        cursor.close()
+        conn.close()
+        flash("This user does not have a valid email address on file.", "error")
+        return redirect(next_url)
+
+    token_hash = None
+    try:
+        raw_token, expires_at, token_hash = create_password_reset_request(
+            cursor,
+            user_id=user_id,
+            requested_by=g.current_user["user_id"],
+        )
+        conn.commit()
+
+        reset_url = build_public_url("reset_password", token=raw_token)
+        subject, body = build_password_reset_email(user, reset_url, expires_at)
+        send_email_message(subject, body, email)
+
+        try:
+            invalidate_other_password_reset_tokens(cursor, user_id, token_hash)
+            conn.commit()
+        except mysql.connector.Error as err:
+            conn.rollback()
+            app.logger.warning(
+                "Password reset email sent to %s, but older tokens could not be invalidated: %s",
+                email,
+                err,
+            )
+
+        flash(
+            f"Password reset link sent to {email}. It expires at {expires_at.strftime('%B %d, %Y %H:%M')}.",
+            "success",
+        )
+        return redirect(next_url)
+    except (RuntimeError, smtplib.SMTPException, OSError) as err:
+        conn.rollback()
+        try:
+            if token_hash:
+                delete_password_reset_token(cursor, token_hash)
+                conn.commit()
+        except Exception:
+            conn.rollback()
+        flash(f"Unable to send the reset email: {err}", "error")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(next_url)
 
 
 @admin_required
@@ -6112,6 +6899,7 @@ def login():
         return redirect(next_url or default_login_redirect())
 
     next_url = get_safe_next_url()
+    email_prefill = (request.args.get("email") or "").strip().lower()
 
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
@@ -6129,7 +6917,7 @@ def login():
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
             """
-            SELECT user_id, full_name, email, phone, role, password_hash
+            SELECT user_id, full_name, email, phone, role, password_hash, password_changed_at
             FROM users
             WHERE email = %s
             """,
@@ -6149,6 +6937,7 @@ def login():
         session["user_id"] = user["user_id"]
         session["user_role"] = user["role"]
         session["user_name"] = user["full_name"]
+        session[PASSWORD_VERSION_SESSION_KEY] = serialize_password_version(user.get("password_changed_at"))
         flash("Login successful.", "success")
 
         destination = next_url
@@ -6156,7 +6945,7 @@ def login():
             destination = url_for("admin_dashboard") if user["role"] == ROLE_ADMIN else url_for("home")
         return redirect(destination)
 
-    return render_template("login.html", next=next_url)
+    return render_template("login.html", next=next_url, email=email_prefill)
 
 
 def register():
@@ -6206,28 +6995,31 @@ def register():
                     flash("An account with that email already exists.", "error")
                     return redirect(url_for("register"))
 
+                password_changed_at = current_datetime()
                 cursor.execute(
                     """
                     UPDATE users
-                    SET full_name=%s, phone=%s, password_hash=%s, role=%s, created_at=%s
+                    SET full_name=%s, phone=%s, password_hash=%s, password_changed_at=%s, role=%s, created_at=%s
                     WHERE user_id=%s
                     """,
                     (
                         full_name,
                         phone,
                         password_hash,
+                        password_changed_at,
                         existing.get("role") or ROLE_USER,
                         now,
                         existing["user_id"],
                     ),
                 )
+                invalidate_password_reset_tokens(cursor, existing["user_id"])
             else:
                 cursor.execute(
                     """
-                    INSERT INTO users (full_name, email, phone, password_hash, role, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO users (full_name, email, phone, password_hash, password_changed_at, role, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (full_name, email, phone, password_hash, ROLE_USER, now),
+                    (full_name, email, phone, password_hash, now, ROLE_USER, now),
                 )
 
             conn.commit()
@@ -6248,6 +7040,83 @@ def logout():
         session.clear()
         flash("You have been logged out.", "success")
     return redirect(url_for("home"))
+
+
+def reset_password(token):
+    token = (token or "").strip()
+    invalid_reason = "This password reset link is invalid or has expired."
+
+    if not token:
+        return render_template(
+            "password_reset.html",
+            reset_request=None,
+            token="",
+            invalid_reason=invalid_reason,
+        ), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    reset_request = fetch_password_reset_request(cursor, token)
+
+    if (
+        not reset_request
+        or reset_request.get("used_at")
+        or reset_request.get("expires_at") <= current_datetime()
+    ):
+        cursor.close()
+        conn.close()
+        return render_template(
+            "password_reset.html",
+            reset_request=None,
+            token=token,
+            invalid_reason=invalid_reason,
+        ), 400
+
+    if request.method == "POST":
+        new_password = request.form.get("new_password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if len(new_password) < 8:
+            flash("Password must be at least 8 characters long.", "error")
+        elif new_password != confirm_password:
+            flash("Passwords do not match.", "error")
+        else:
+            try:
+                password_changed_at = current_datetime()
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET password_hash=%s, password_changed_at=%s
+                    WHERE user_id=%s
+                    """,
+                    (
+                        generate_password_hash(new_password),
+                        password_changed_at,
+                        reset_request["user_id"],
+                    ),
+                )
+                invalidate_password_reset_tokens(cursor, reset_request["user_id"])
+                conn.commit()
+                clear_auth_session()
+                flash(
+                    "Your password has been reset successfully. Please log in with the new password.",
+                    "success",
+                )
+                cursor.close()
+                conn.close()
+                return redirect(url_for("login", email=reset_request["email"]))
+            except mysql.connector.Error as err:
+                conn.rollback()
+                flash(f"Database error: {err}", "error")
+
+    cursor.close()
+    conn.close()
+    return render_template(
+        "password_reset.html",
+        reset_request=reset_request,
+        token=token,
+        invalid_reason="",
+    )
 
 
 @login_required
