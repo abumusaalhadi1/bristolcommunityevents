@@ -1,8 +1,4 @@
 """Flask application for Bristol Community Events.
-
-The project stays in one file for coursework convenience, but the code is
-grouped into clear sections: constants, helpers, database setup, route
-handlers, and error pages.
 """
 
 from datetime import datetime, timedelta
