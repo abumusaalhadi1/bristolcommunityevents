@@ -3,6 +3,9 @@
 
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from collections import Counter, defaultdict
+import csv
+import io
 from functools import wraps
 from html import escape as html_escape
 from email.message import EmailMessage
@@ -52,6 +55,7 @@ from receipt import (
     STUDENT_ID_DISCLAIMER,
     booking_receipt_reference,
     build_booking_receipt_pdf as _build_booking_receipt_pdf,
+    build_admin_reports_pdf,
 )
 from seed_data import DEFAULT_CATEGORIES, DEFAULT_EVENTS, DEFAULT_REVIEWS, DEFAULT_VENUES
 
@@ -390,6 +394,331 @@ def fetch_event_mix_counts(cursor, start_date, end_date):
         (start_date, end_date),
     )
     return cursor.fetchone() or {}
+
+
+def parse_report_date(value):
+    value = (value or "").strip()
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def build_report_period_context(chart_period_raw, selected_year, start_raw="", end_raw=""):
+    today = current_date()
+    period_key = (chart_period_raw or "").strip().lower()
+
+    if period_key not in {"weekly", "monthly", "yearly", "custom"}:
+        period_key = "yearly"
+
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    month_start = today.replace(day=1)
+    next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+    month_end = next_month_start - timedelta(days=1)
+    year_start = today.replace(year=selected_year, month=1, day=1)
+    year_end = today.replace(year=selected_year, month=12, day=31)
+
+    if period_key == "weekly":
+        return {
+            "period_key": period_key,
+            "start_date": week_start,
+            "end_date": week_end,
+            "title": "Weekly Analytics",
+            "note": f"Bookings and revenue between {week_start.strftime('%b %d, %Y')} and {week_end.strftime('%b %d, %Y')}.",
+        }
+
+    if period_key == "monthly":
+        return {
+            "period_key": period_key,
+            "start_date": month_start,
+            "end_date": month_end,
+            "title": "Monthly Analytics",
+            "note": f"Bookings and revenue between {month_start.strftime('%b %d, %Y')} and {month_end.strftime('%b %d, %Y')}.",
+        }
+
+    if period_key == "custom":
+        start_date = parse_report_date(start_raw) or month_start
+        end_date = parse_report_date(end_raw) or today
+        if end_date < start_date:
+            start_date, end_date = end_date, start_date
+        return {
+            "period_key": period_key,
+            "start_date": start_date,
+            "end_date": end_date,
+            "title": "Custom Date Range",
+            "note": f"Bookings and revenue between {start_date.strftime('%b %d, %Y')} and {end_date.strftime('%b %d, %Y')}.",
+        }
+
+    return {
+        "period_key": "yearly",
+        "start_date": year_start,
+        "end_date": year_end,
+        "title": f"Yearly Analytics - {selected_year}",
+        "note": f"Bookings and revenue in {selected_year}.",
+    }
+
+
+def previous_date_range(start_date, end_date):
+    if not start_date or not end_date:
+        return None, None
+    span_days = max((end_date - start_date).days + 1, 1)
+    previous_end = start_date - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=span_days - 1)
+    return previous_start, previous_end
+
+
+def report_bucket_key(period_key: str, booked_at: datetime, start_date, end_date):
+    span_days = max((end_date - start_date).days + 1, 1)
+    if period_key == "yearly":
+        return booked_at.strftime("%Y-%m")
+    if period_key == "custom" and span_days > 90:
+        return booked_at.strftime("%Y-%m")
+    return booked_at.strftime("%Y-%m-%d")
+
+
+def report_bucket_label(period_key: str, bucket_key: str):
+    if period_key == "yearly" or len(bucket_key) == 7:
+        try:
+            return datetime.strptime(bucket_key, "%Y-%m").strftime("%b %Y")
+        except ValueError:
+            return bucket_key
+    try:
+        return datetime.strptime(bucket_key, "%Y-%m-%d").strftime("%b %d")
+    except ValueError:
+        return bucket_key
+
+
+def fetch_report_booking_rows(cursor, start_date, end_date):
+    booked_at_sql = booking_booked_at_sql("b")
+    cursor.execute(
+        f"""
+        SELECT b.booking_id, b.user_id, b.event_id, COALESCE(b.status, 'Confirmed') AS status,
+               b.tickets, b.booking_days, b.subtotal_amount, b.discount_applied,
+               b.cancellation_charge, b.refund_amount, b.created_at, b.booking_date,
+               {booked_at_sql} AS booked_at,
+               e.event_name, e.event_date, e.event_end_date, e.price, e.event_cost,
+               c.category_name,
+               u.full_name
+        FROM bookings b
+        JOIN events e ON b.event_id = e.event_id
+        LEFT JOIN categories c ON e.category_id = c.category_id
+        LEFT JOIN users u ON b.user_id = u.user_id
+        WHERE DATE({booked_at_sql}) BETWEEN %s AND %s
+        ORDER BY booked_at ASC, b.booking_id ASC
+        """,
+        (start_date, end_date),
+    )
+    return cursor.fetchall()
+
+
+def fetch_report_waitlist_rows(cursor, start_date, end_date):
+    cursor.execute(
+        """
+        SELECT w.waitlist_id, w.event_id, w.user_id, w.requested_tickets, w.booking_days,
+               w.status, w.created_at, w.updated_at,
+               e.event_name, e.event_date, e.event_end_date,
+               c.category_name
+        FROM event_waitlist w
+        JOIN events e ON w.event_id = e.event_id
+        LEFT JOIN categories c ON e.category_id = c.category_id
+        WHERE e.event_date BETWEEN %s AND %s
+        ORDER BY w.created_at DESC, w.waitlist_id DESC
+        """,
+        (start_date, end_date),
+    )
+    return cursor.fetchall()
+
+
+def build_report_metrics(rows):
+    metrics = {
+        "bookings_count": 0,
+        "active_bookings_count": 0,
+        "cancelled_bookings_count": 0,
+        "tickets_sold": 0,
+        "revenue_total": Decimal("0.00"),
+        "cancellation_charge_total": Decimal("0.00"),
+        "refund_total": Decimal("0.00"),
+    }
+    customer_counts = Counter()
+
+    for row in rows:
+        metrics["bookings_count"] += 1
+        status = (row.get("status") or "").strip()
+        is_cancelled = status == "Cancelled"
+        if is_cancelled:
+            metrics["cancelled_bookings_count"] += 1
+            metrics["cancellation_charge_total"] += to_money(row.get("cancellation_charge"))
+            metrics["refund_total"] += to_money(row.get("refund_amount"))
+        else:
+            metrics["active_bookings_count"] += 1
+            metrics["tickets_sold"] += int(row.get("tickets") or 0)
+            subtotal = to_money(row.get("subtotal_amount"))
+            discount = to_money(row.get("discount_applied"))
+            metrics["revenue_total"] += max(subtotal - discount, Decimal("0.00"))
+            user_id = row.get("user_id")
+            if user_id is not None:
+                customer_counts[user_id] += 1
+
+    unique_customers = len(customer_counts)
+    repeat_bookers = sum(1 for count in customer_counts.values() if count > 1)
+    booking_completion_rate = (
+        round((metrics["active_bookings_count"] / metrics["bookings_count"]) * 100, 1)
+        if metrics["bookings_count"]
+        else 0.0
+    )
+    cancellation_rate = (
+        round((metrics["cancelled_bookings_count"] / metrics["bookings_count"]) * 100, 1)
+        if metrics["bookings_count"]
+        else 0.0
+    )
+    avg_spend = (
+        (metrics["revenue_total"] / unique_customers).quantize(Decimal("0.01"))
+        if unique_customers
+        else Decimal("0.00")
+    )
+
+    metrics.update(
+        {
+            "unique_customers": unique_customers,
+            "repeat_bookers": repeat_bookers,
+            "booking_completion_rate": booking_completion_rate,
+            "cancellation_rate": cancellation_rate,
+            "avg_spend_per_customer": avg_spend,
+        }
+    )
+    return metrics, customer_counts
+
+
+def build_report_timeseries(rows, start_date, end_date, period_key):
+    buckets = {}
+    for row in rows:
+        booked_at = row.get("booked_at") or row.get("created_at")
+        if not booked_at:
+            continue
+        bucket_key = report_bucket_key(period_key, booked_at, start_date, end_date)
+        entry = buckets.setdefault(bucket_key, Decimal("0.00"))
+        status = (row.get("status") or "").strip()
+        if status != "Cancelled":
+            subtotal = to_money(row.get("subtotal_amount"))
+            discount = to_money(row.get("discount_applied"))
+            buckets[bucket_key] = entry + max(subtotal - discount, Decimal("0.00"))
+
+    if not buckets:
+        return [], []
+
+    sorted_keys = sorted(buckets.keys())
+    labels = [report_bucket_label(period_key, key) for key in sorted_keys]
+    values = [float(buckets[key]) for key in sorted_keys]
+    return labels, values
+
+
+def build_report_top_events(rows, limit=5):
+    event_totals = defaultdict(lambda: {"label": "", "value": Decimal("0.00")})
+    for row in rows:
+        if (row.get("status") or "").strip() == "Cancelled":
+            continue
+        event_id = row.get("event_id")
+        if event_id is None:
+            continue
+        subtotal = to_money(row.get("subtotal_amount"))
+        discount = to_money(row.get("discount_applied"))
+        event_totals[event_id]["label"] = row.get("event_name") or "Event"
+        event_totals[event_id]["value"] += max(subtotal - discount, Decimal("0.00"))
+
+    top_events = sorted(event_totals.values(), key=lambda item: item["value"], reverse=True)[:limit]
+    return [item["label"] for item in top_events], [float(item["value"]) for item in top_events]
+
+
+def build_report_category_breakdown(rows):
+    category_totals = defaultdict(Decimal)
+    for row in rows:
+        if (row.get("status") or "").strip() == "Cancelled":
+            continue
+        category = row.get("category_name") or "Uncategorised"
+        category_totals[category] += Decimal(str(int(row.get("tickets") or 0)))
+
+    sorted_items = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)
+    return [label for label, _ in sorted_items], [float(value) for _, value in sorted_items]
+
+
+def build_report_customer_rows(rows, limit=5):
+    customer_totals = defaultdict(lambda: {"name": "", "email": "", "bookings": 0, "spend": Decimal("0.00")})
+    for row in rows:
+        if (row.get("status") or "").strip() == "Cancelled":
+            continue
+        user_id = row.get("user_id")
+        if user_id is None:
+            continue
+        subtotal = to_money(row.get("subtotal_amount"))
+        discount = to_money(row.get("discount_applied"))
+        customer = customer_totals[user_id]
+        customer["name"] = row.get("full_name") or customer["name"] or "Customer"
+        customer["bookings"] += 1
+        customer["spend"] += max(subtotal - discount, Decimal("0.00"))
+
+    sorted_customers = sorted(customer_totals.values(), key=lambda item: item["spend"], reverse=True)[:limit]
+    for customer in sorted_customers:
+        customer["spend"] = customer["spend"].quantize(Decimal("0.01"))
+    return sorted_customers
+
+
+def build_report_waitlist_summary(waitlist_rows, event_rows):
+    event_counts = defaultdict(lambda: {"label": "", "requests": 0, "tickets": 0})
+    total_requests = 0
+    total_tickets = 0
+
+    for row in waitlist_rows:
+        event_id = row.get("event_id")
+        if event_id is None:
+            continue
+        requests = 1
+        tickets = int(row.get("requested_tickets") or 0)
+        event = event_counts[event_id]
+        event["label"] = row.get("event_name") or "Event"
+        event["requests"] += requests
+        event["tickets"] += tickets
+        total_requests += requests
+        total_tickets += tickets
+
+    top_events = sorted(event_counts.values(), key=lambda item: (item["requests"], item["tickets"]), reverse=True)
+    return {
+        "total_requests": total_requests,
+        "total_tickets": total_tickets,
+        "top_events": top_events[:5],
+    }
+
+
+def build_report_cancellation_summary(rows):
+    cancelled_rows = [row for row in rows if (row.get("status") or "").strip() == "Cancelled"]
+    total_rows = len(rows)
+    cancelled_count = len(cancelled_rows)
+    cancellation_rate = round((cancelled_count / total_rows) * 100, 1) if total_rows else 0.0
+    lost_revenue = sum((to_money(row.get("subtotal_amount")) - to_money(row.get("discount_applied"))) for row in cancelled_rows)
+    charge_collected = sum(to_money(row.get("cancellation_charge")) for row in cancelled_rows)
+
+    event_counts = defaultdict(lambda: {"label": "", "count": 0, "lost": Decimal("0.00")})
+    for row in cancelled_rows:
+        event_id = row.get("event_id")
+        if event_id is None:
+            continue
+        item = event_counts[event_id]
+        item["label"] = row.get("event_name") or "Event"
+        item["count"] += 1
+        item["lost"] += max(to_money(row.get("subtotal_amount")) - to_money(row.get("discount_applied")), Decimal("0.00"))
+
+    top_events = sorted(event_counts.values(), key=lambda item: (item["count"], item["lost"]), reverse=True)[:5]
+    return {
+        "cancelled_count": cancelled_count,
+        "cancellation_rate": cancellation_rate,
+        "lost_revenue": lost_revenue.quantize(Decimal("0.01")),
+        "charge_collected": charge_collected.quantize(Decimal("0.01")),
+        "top_events": top_events,
+    }
 
 
 def event_duration_days(event) -> int:
@@ -2302,6 +2631,16 @@ def prepare_request_context():
     initialize_database()
     load_current_user()
     load_admin_sidebar_data()
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        expire_waitlist_offers(cursor, conn)
+        conn.commit()
+    except mysql.connector.Error:
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
 
 
 @app.context_processor
@@ -2650,6 +2989,63 @@ def fetch_waitlist_entries(
 def fetch_waitlist_entry(cursor, waitlist_id: int):
     rows = fetch_waitlist_entries(cursor, waitlist_id=waitlist_id, limit=1)
     return rows[0] if rows else None
+
+
+def fetch_active_waitlist_entries(cursor, *, limit=None, order_by=None):
+    entries = fetch_waitlist_entries(
+        cursor,
+        status=None,
+        limit=limit,
+        order_by=order_by or "CASE WHEN w.status = 'Offered' THEN 0 ELSE 1 END, w.created_at ASC, w.waitlist_id ASC",
+    )
+    return [
+        entry
+        for entry in entries
+        if (entry.get("status") or "") in {WAITLIST_STATUS_WAITING, WAITLIST_STATUS_OFFERED}
+    ]
+
+
+def expire_waitlist_offers(cursor, conn):
+    now = current_datetime()
+    cursor.execute(
+        """
+        SELECT waitlist_id, event_id
+        FROM event_waitlist
+        WHERE status=%s
+          AND offer_expires_at IS NOT NULL
+          AND offer_expires_at < %s
+        ORDER BY offer_expires_at ASC, created_at ASC, waitlist_id ASC
+        """,
+        (WAITLIST_STATUS_OFFERED, now),
+    )
+    expired_rows = cursor.fetchall()
+    if not expired_rows:
+        return []
+
+    affected_event_ids = []
+    seen_event_ids = set()
+
+    for row in expired_rows:
+        cursor.execute(
+            """
+            UPDATE event_waitlist
+            SET status=%s,
+                offer_expires_at=NULL,
+                updated_at=%s
+            WHERE waitlist_id=%s
+            """,
+            (WAITLIST_STATUS_EXPIRED, now, row["waitlist_id"]),
+        )
+        event_id = row.get("event_id")
+        if event_id not in seen_event_ids:
+            seen_event_ids.add(event_id)
+            affected_event_ids.append(event_id)
+
+    promoted_waitlist_ids = []
+    for event_id in affected_event_ids:
+        promoted_waitlist_ids.extend(promote_waitlist_entries(cursor, conn, event_id))
+
+    return promoted_waitlist_ids
 
 
 def waitlist_offer_is_active(waitlist_entry) -> bool:
@@ -4509,6 +4905,53 @@ def accept_waitlist_offer(waitlist_id):
 
 
 @login_required
+def reject_waitlist_offer(waitlist_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    waitlist_entry = fetch_waitlist_entry(cursor, waitlist_id)
+
+    if not waitlist_entry:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if waitlist_entry.get("user_id") != g.current_user.get("user_id"):
+        cursor.close()
+        conn.close()
+        abort(403)
+
+    event = fetch_event(cursor, waitlist_entry["event_id"])
+    if not event:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    was_active_offer = waitlist_offer_is_active(waitlist_entry)
+    new_status = WAITLIST_STATUS_CANCELLED if was_active_offer else WAITLIST_STATUS_EXPIRED
+
+    cursor.execute(
+        """
+        UPDATE event_waitlist
+        SET status=%s,
+            offer_expires_at=NULL,
+            updated_at=%s
+        WHERE waitlist_id=%s
+        """,
+        (new_status, current_datetime(), waitlist_id),
+    )
+    promote_waitlist_entries(cursor, conn, event["event_id"])
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    if was_active_offer:
+        flash("Your waitlist offer was rejected and the next person in line has been offered the seat.", "success")
+    else:
+        flash("That waitlist offer had already expired, and the queue has been moved forward.", "success")
+    return redirect(url_for("account"))
+
+
+@login_required
 def payment_details():
     pending_booking = session.get(PENDING_BOOKING_SESSION_KEY)
     if not pending_booking:
@@ -5291,6 +5734,8 @@ def admin_reports():
     venue_id_raw = request.args.get("venue_id", "").strip()
     year_raw = request.args.get("year", "").strip()
     chart_period_raw = request.args.get("chart_period", "").strip().lower()
+    start_date_raw = request.args.get("start_date", "").strip()
+    end_date_raw = request.args.get("end_date", "").strip()
 
     current_year = current_date().year
     try:
@@ -5299,42 +5744,16 @@ def admin_reports():
         selected_year = current_year
         year_raw = str(current_year)
 
-    if chart_period_raw not in {"weekly", "monthly", "yearly"}:
-        chart_period_raw = "yearly"
-
-    today = current_date()
-    week_start = today - timedelta(days=today.weekday())
-    week_end = week_start + timedelta(days=6)
-
-    month_start = today.replace(day=1)
-    next_month_start = (month_start + timedelta(days=32)).replace(day=1)
-    month_end = next_month_start - timedelta(days=1)
-
-    year_start = today.replace(year=selected_year, month=1, day=1)
-    year_end = today.replace(year=selected_year, month=12, day=31)
-
-    period_config = {
-        "weekly": {
-            "title": "Weekly Event Mix",
-            "note": f"Events between {week_start.strftime('%b %d, %Y')} and {week_end.strftime('%b %d, %Y')}.",
-            "start_date": week_start,
-            "end_date": week_end,
-        },
-        "monthly": {
-            "title": "Monthly Event Mix",
-            "note": f"Events between {month_start.strftime('%b %d, %Y')} and {month_end.strftime('%b %d, %Y')}.",
-            "start_date": month_start,
-            "end_date": month_end,
-        },
-        "yearly": {
-            "title": f"Yearly Event Mix - {selected_year}",
-            "note": f"Events in {selected_year}.",
-            "start_date": year_start,
-            "end_date": year_end,
-        },
-    }
-    selected_chart_period = chart_period_raw
-    chart_period = period_config[selected_chart_period]
+    selected_chart_period = chart_period_raw if chart_period_raw in {"weekly", "monthly", "yearly", "custom"} else "yearly"
+    chart_period = build_report_period_context(
+        selected_chart_period,
+        selected_year,
+        start_date_raw,
+        end_date_raw,
+    )
+    range_start = chart_period["start_date"]
+    range_end = chart_period["end_date"]
+    previous_start, previous_end = previous_date_range(range_start, range_end)
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -5509,6 +5928,59 @@ def admin_reports():
                 )
                 venue_report["events"] = [enrich_booking_event(event) for event in cursor.fetchall()]
 
+    report_booking_rows = fetch_report_booking_rows(cursor, range_start, range_end)
+    report_metrics, report_customer_counts = build_report_metrics(report_booking_rows)
+    previous_booking_rows = (
+        fetch_report_booking_rows(cursor, previous_start, previous_end)
+        if previous_start and previous_end
+        else []
+    )
+    previous_metrics, _ = build_report_metrics(previous_booking_rows)
+    revenue_trend_labels, revenue_trend_values = build_report_timeseries(
+        report_booking_rows,
+        range_start,
+        range_end,
+        chart_period["period_key"],
+    )
+    top_event_labels, top_event_values = build_report_top_events(report_booking_rows)
+    category_labels, category_values = build_report_category_breakdown(report_booking_rows)
+    report_customer_rows = build_report_customer_rows(report_booking_rows)
+    cancellation_summary = build_report_cancellation_summary(report_booking_rows)
+    waitlist_rows = fetch_report_waitlist_rows(cursor, range_start, range_end)
+    waitlist_summary = build_report_waitlist_summary(waitlist_rows, report_booking_rows)
+    event_mix_counts = fetch_event_mix_counts(cursor, range_start, range_end)
+
+    def change_payload(current_value, previous_value):
+        current_num = float(current_value or 0)
+        previous_num = float(previous_value or 0)
+        delta = current_num - previous_num
+        pct = None
+        if previous_num:
+            pct = round((delta / previous_num) * 100, 1)
+        elif current_num:
+            pct = 100.0
+        return {
+            "current": current_num,
+            "previous": previous_num,
+            "delta": delta,
+            "pct": pct,
+        }
+
+    report_comparison = {
+        "revenue": change_payload(report_metrics["revenue_total"], previous_metrics["revenue_total"]),
+        "tickets": change_payload(report_metrics["tickets_sold"], previous_metrics["tickets_sold"]),
+        "customers": change_payload(report_metrics["unique_customers"], previous_metrics["unique_customers"]),
+        "bookings": change_payload(report_metrics["active_bookings_count"], previous_metrics["active_bookings_count"]),
+    }
+    report_completion_rate = report_metrics["booking_completion_rate"]
+    report_cancellation_rate = report_metrics["cancellation_rate"]
+
+    report_legend = {
+        "active": "Active booked",
+        "cancelled": "Cancelled only",
+        "none": "No booking",
+    }
+
     cursor.execute(
         f"""
         SELECT
@@ -5554,11 +6026,6 @@ def admin_reports():
         (selected_year,),
     )
     year_report["fully_booked_events_count"] = cursor.fetchone()["count"] or 0
-    event_mix_counts = fetch_event_mix_counts(
-        cursor,
-        chart_period["start_date"],
-        chart_period["end_date"],
-    )
     year_report["event_mix_period_key"] = selected_chart_period
     year_report["event_mix_title"] = chart_period["title"]
     year_report["event_mix_note"] = chart_period["note"]
@@ -5584,10 +6051,535 @@ def admin_reports():
         event_report=event_report,
         venue_report=venue_report,
         year_report=year_report,
+        report_period=chart_period,
+        report_metrics=report_metrics,
+        report_comparison=report_comparison,
+        report_revenue_trend_labels=revenue_trend_labels,
+        report_revenue_trend_values=revenue_trend_values,
+        report_top_event_labels=top_event_labels,
+        report_top_event_values=top_event_values,
+        report_category_labels=category_labels,
+        report_category_values=category_values,
+        report_customers=report_customer_rows,
+        cancellation_summary=cancellation_summary,
+        waitlist_summary=waitlist_summary,
+        report_completion_rate=report_completion_rate,
+        report_cancellation_rate=report_cancellation_rate,
+        report_legend=report_legend,
+        report_booking_rows=report_booking_rows,
+        report_waitlist_rows=waitlist_rows,
         selected_event_id=event_id_raw,
         selected_venue_id=venue_id_raw,
         selected_year=selected_year,
         selected_chart_period=selected_chart_period,
+        selected_start_date=range_start.isoformat() if range_start else "",
+        selected_end_date=range_end.isoformat() if range_end else "",
+    )
+
+
+def build_admin_report_data(event_id_raw, venue_id_raw, year_raw, chart_period_raw, start_date_raw, end_date_raw):
+    current_year = current_date().year
+    try:
+        selected_year = int(year_raw) if year_raw else current_year
+    except (TypeError, ValueError):
+        selected_year = current_year
+
+    selected_chart_period = chart_period_raw if chart_period_raw in {"weekly", "monthly", "yearly", "custom"} else "yearly"
+    report_period = build_report_period_context(
+        selected_chart_period,
+        selected_year,
+        start_date_raw,
+        end_date_raw,
+    )
+    range_start = report_period["start_date"]
+    range_end = report_period["end_date"]
+    previous_start, previous_end = previous_date_range(range_start, range_end)
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT event_id, event_name, event_date, event_end_date, price
+            FROM events
+            ORDER BY event_date DESC, event_name ASC
+            """
+        )
+        report_events = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT venue_id, venue_name, city, capacity
+            FROM venues
+            ORDER BY
+                CASE
+                    WHEN LOWER(venue_name) = 'ashton gate stadium' THEN 1
+                    WHEN LOWER(venue_name) = 'arnolfini' THEN 2
+                    WHEN LOWER(venue_name) = 'the bristol hippodrome' THEN 3
+                    WHEN LOWER(venue_name) = 'bristol old vic' THEN 4
+                    WHEN LOWER(venue_name) = 'bristol central library' THEN 5
+                    WHEN LOWER(venue_name) = 'royal west of england academy' THEN 6
+                    WHEN LOWER(venue_name) = 'uwe exhibition centre' THEN 7
+                    WHEN LOWER(venue_name) IN ('creative space a', 'creative space b', 'community centre a') THEN 9
+                    ELSE 8
+                END,
+                CASE
+                    WHEN LOWER(venue_name) = 'creative space a' THEN 1
+                    WHEN LOWER(venue_name) = 'creative space b' THEN 2
+                    WHEN LOWER(venue_name) = 'community centre a' THEN 3
+                    WHEN LOWER(venue_name) = 'ashton gate stadium'
+                      OR LOWER(venue_name) = 'arnolfini'
+                      OR LOWER(venue_name) = 'the bristol hippodrome'
+                      OR LOWER(venue_name) = 'bristol old vic'
+                      OR LOWER(venue_name) = 'bristol central library'
+                      OR LOWER(venue_name) = 'royal west of england academy'
+                      OR LOWER(venue_name) = 'uwe exhibition centre' THEN 0
+                    ELSE -venue_id
+                END ASC,
+                venue_name ASC
+            """
+        )
+        report_venues = cursor.fetchall()
+
+        event_report = None
+        venue_report = None
+
+        if event_id_raw:
+            try:
+                event_id = int(event_id_raw)
+            except (TypeError, ValueError):
+                event_id = None
+            if event_id:
+                cursor.execute(
+                    """
+                    SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.price,
+                           e.event_cost, e.event_capacity, v.venue_name, c.category_name,
+                           COALESCE(bt.booked_tickets, 0) AS booked_tickets,
+                           CASE
+                                WHEN e.event_capacity IS NULL THEN NULL
+                                ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
+                           END AS remaining_seats
+                    FROM events e
+                    LEFT JOIN venues v ON e.venue_id = v.venue_id
+                    LEFT JOIN categories c ON e.category_id = c.category_id
+                    LEFT JOIN (
+                        SELECT event_id, SUM(tickets) AS booked_tickets
+                        FROM bookings
+                        WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                        GROUP BY event_id
+                    ) bt ON e.event_id = bt.event_id
+                    WHERE e.event_id = %s
+                    """,
+                    (event_id,),
+                )
+                event_report = cursor.fetchone()
+                if event_report:
+                    cursor.execute(
+                        f"""
+                        SELECT
+                            COUNT(*) AS bookings_count,
+                            COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN b.tickets ELSE 0 END), 0) AS tickets_sold,
+                            {booking_revenue_total_sql()} AS revenue_total,
+                            COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') = 'Cancelled' THEN 1 ELSE 0 END), 0) AS cancelled_bookings
+                        FROM bookings b
+                        WHERE b.event_id = %s
+                        """,
+                        (event_id,),
+                    )
+                    event_stats = cursor.fetchone() or {}
+                    event_report.update(event_stats)
+                    event_report["remaining_seats"] = available_seats(cursor, event_id)
+                    event_report["profit_total"] = (
+                        to_money(event_report.get("revenue_total")) - to_money(event_report.get("event_cost"))
+                    )
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS waitlist_count
+                        FROM event_waitlist
+                        WHERE event_id=%s
+                          AND status IN (%s, %s)
+                        """,
+                        (event_id, WAITLIST_STATUS_WAITING, WAITLIST_STATUS_OFFERED),
+                    )
+                    event_report["waitlist_count"] = cursor.fetchone()["waitlist_count"] or 0
+
+        if venue_id_raw:
+            try:
+                venue_id = int(venue_id_raw)
+            except (TypeError, ValueError):
+                venue_id = None
+            if venue_id:
+                cursor.execute(
+                    f"""
+                    SELECT v.venue_id, v.venue_name, v.address, v.city, v.capacity,
+                           COALESCE(stats.total_events, 0) AS total_events,
+                           COALESCE(stats.upcoming_events, 0) AS upcoming_events,
+                           COALESCE(stats.fully_booked_events, 0) AS fully_booked_events,
+                           COALESCE(stats.revenue_total, 0) AS revenue_total
+                    FROM venues v
+                    LEFT JOIN (
+                        SELECT e.venue_id,
+                               COUNT(DISTINCT e.event_id) AS total_events,
+                               SUM(CASE WHEN e.event_date >= CURDATE() THEN 1 ELSE 0 END) AS upcoming_events,
+                               SUM(
+                                   CASE
+                                       WHEN e.event_capacity IS NOT NULL
+                                            AND COALESCE(bt.booked_tickets, 0) >= e.event_capacity
+                                       THEN 1 ELSE 0
+                                   END
+                               ) AS fully_booked_events,
+                               {booking_revenue_total_sql()} AS revenue_total
+                        FROM events e
+                        LEFT JOIN (
+                            SELECT event_id, SUM(tickets) AS booked_tickets
+                            FROM bookings
+                            WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                            GROUP BY event_id
+                        ) bt ON e.event_id = bt.event_id
+                        LEFT JOIN bookings b ON b.event_id = e.event_id
+                        GROUP BY e.venue_id
+                    ) stats ON v.venue_id = stats.venue_id
+                    WHERE v.venue_id = %s
+                    """,
+                    (venue_id,),
+                )
+                venue_report = cursor.fetchone()
+                if venue_report:
+                    cursor.execute(
+                        """
+                        SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.price,
+                               COALESCE(bt.booked_tickets, 0) AS booked_tickets,
+                               CASE
+                                    WHEN e.event_capacity IS NULL THEN NULL
+                                    ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
+                               END AS remaining_seats
+                        FROM events e
+                        LEFT JOIN (
+                            SELECT event_id, SUM(tickets) AS booked_tickets
+                            FROM bookings
+                            WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                            GROUP BY event_id
+                        ) bt ON e.event_id = bt.event_id
+                        WHERE e.venue_id = %s
+                        ORDER BY e.event_date ASC, e.event_name ASC
+                        """,
+                        (venue_id,),
+                    )
+                    venue_report["events"] = [enrich_booking_event(event) for event in cursor.fetchall()]
+
+        report_booking_rows = fetch_report_booking_rows(cursor, range_start, range_end)
+        report_metrics, _ = build_report_metrics(report_booking_rows)
+        previous_booking_rows = (
+            fetch_report_booking_rows(cursor, previous_start, previous_end)
+            if previous_start and previous_end
+            else []
+        )
+        previous_metrics, _ = build_report_metrics(previous_booking_rows)
+        revenue_trend_labels, revenue_trend_values = build_report_timeseries(
+            report_booking_rows,
+            range_start,
+            range_end,
+            report_period["period_key"],
+        )
+        top_event_labels, top_event_values = build_report_top_events(report_booking_rows)
+        category_labels, category_values = build_report_category_breakdown(report_booking_rows)
+        report_customer_rows = build_report_customer_rows(report_booking_rows)
+        cancellation_summary = build_report_cancellation_summary(report_booking_rows)
+        waitlist_rows = fetch_report_waitlist_rows(cursor, range_start, range_end)
+        waitlist_summary = build_report_waitlist_summary(waitlist_rows, report_booking_rows)
+        event_mix_counts = fetch_event_mix_counts(cursor, range_start, range_end)
+
+        def change_payload(current_value, previous_value):
+            current_num = float(current_value or 0)
+            previous_num = float(previous_value or 0)
+            delta = current_num - previous_num
+            pct = None
+            if previous_num:
+                pct = round((delta / previous_num) * 100, 1)
+            elif current_num:
+                pct = 100.0
+            return {
+                "current": current_num,
+                "previous": previous_num,
+                "delta": delta,
+                "pct": pct,
+            }
+
+        report_comparison = {
+            "revenue": change_payload(report_metrics["revenue_total"], previous_metrics["revenue_total"]),
+            "tickets": change_payload(report_metrics["tickets_sold"], previous_metrics["tickets_sold"]),
+            "customers": change_payload(report_metrics["unique_customers"], previous_metrics["unique_customers"]),
+            "bookings": change_payload(report_metrics["active_bookings_count"], previous_metrics["active_bookings_count"]),
+        }
+
+        cursor.execute(
+            f"""
+            SELECT
+                COUNT(DISTINCT CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN e.event_id END) AS successful_events_count,
+                COUNT(DISTINCT e.event_id) AS total_events_in_year,
+                {booking_revenue_total_sql()} AS revenue_total,
+                COALESCE(SUM(CASE WHEN COALESCE(b.status, 'Confirmed') <> 'Cancelled' THEN b.tickets ELSE 0 END), 0) AS tickets_sold
+            FROM events e
+            LEFT JOIN bookings b ON b.event_id = e.event_id
+            WHERE YEAR(e.event_date) = %s
+            """,
+            (selected_year,),
+        )
+        year_report = cursor.fetchone() or {}
+        year_report["selected_year"] = selected_year
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(COALESCE(event_cost, 0)), 0) AS total
+            FROM events
+            WHERE YEAR(event_date) = %s
+            """,
+            (selected_year,),
+        )
+        year_report["cost_total"] = cursor.fetchone()["total"] or 0
+        year_report["profit_total"] = to_money(year_report.get("revenue_total")) - to_money(
+            year_report.get("cost_total")
+        )
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM events e
+            LEFT JOIN (
+                SELECT event_id, SUM(tickets) AS booked_tickets
+                FROM bookings
+                WHERE COALESCE(status, 'Confirmed') <> 'Cancelled'
+                GROUP BY event_id
+            ) bt ON e.event_id = bt.event_id
+            WHERE YEAR(e.event_date) = %s
+              AND e.event_capacity IS NOT NULL
+              AND COALESCE(bt.booked_tickets, 0) >= e.event_capacity
+            """,
+            (selected_year,),
+        )
+        year_report["fully_booked_events_count"] = cursor.fetchone()["count"] or 0
+        year_report["event_mix_period_key"] = report_period["period_key"]
+        year_report["event_mix_title"] = report_period["title"]
+        year_report["event_mix_note"] = report_period["note"]
+        year_report["event_mix_labels"] = [
+            "Active booked events",
+            "Cancelled-only events",
+            "No booking events",
+        ]
+        year_report["event_mix_values"] = [
+            event_mix_counts.get("active_booked_events_count") or 0,
+            event_mix_counts.get("cancelled_only_events_count") or 0,
+            event_mix_counts.get("no_booking_events_count") or 0,
+        ]
+        year_report["event_mix_colors"] = ["#1a5276", "#e74c3c", "#f39c12"]
+
+        return {
+            "report_events": report_events,
+            "report_venues": report_venues,
+            "event_report": event_report,
+            "venue_report": venue_report,
+            "year_report": year_report,
+            "report_period": report_period,
+            "report_metrics": report_metrics,
+            "report_comparison": report_comparison,
+            "report_revenue_trend_labels": revenue_trend_labels,
+            "report_revenue_trend_values": revenue_trend_values,
+            "report_top_event_labels": top_event_labels,
+            "report_top_event_values": top_event_values,
+            "report_category_labels": category_labels,
+            "report_category_values": category_values,
+            "report_customers": report_customer_rows,
+            "cancellation_summary": cancellation_summary,
+            "waitlist_summary": waitlist_summary,
+            "report_completion_rate": report_metrics["booking_completion_rate"],
+            "report_cancellation_rate": report_metrics["cancellation_rate"],
+            "selected_event_id": event_id_raw,
+            "selected_venue_id": venue_id_raw,
+            "selected_year": selected_year,
+            "selected_chart_period": report_period["period_key"],
+            "selected_start_date": range_start.isoformat() if range_start else "",
+            "selected_end_date": range_end.isoformat() if range_end else "",
+        }
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@admin_required
+def admin_reports_export_csv():
+    event_id_raw = request.args.get("event_id", "").strip()
+    venue_id_raw = request.args.get("venue_id", "").strip()
+    year_raw = request.args.get("year", "").strip()
+    chart_period_raw = request.args.get("chart_period", "").strip().lower()
+    start_date_raw = request.args.get("start_date", "").strip()
+    end_date_raw = request.args.get("end_date", "").strip()
+
+    current_year = current_date().year
+    try:
+        selected_year = int(year_raw) if year_raw else current_year
+    except (TypeError, ValueError):
+        selected_year = current_year
+
+    selected_chart_period = chart_period_raw if chart_period_raw in {"weekly", "monthly", "yearly", "custom"} else "yearly"
+    report_period = build_report_period_context(
+        selected_chart_period,
+        selected_year,
+        start_date_raw,
+        end_date_raw,
+    )
+    range_start = report_period["start_date"]
+    range_end = report_period["end_date"]
+    previous_start, previous_end = previous_date_range(range_start, range_end)
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        report_booking_rows = fetch_report_booking_rows(cursor, range_start, range_end)
+        report_metrics, _ = build_report_metrics(report_booking_rows)
+        previous_booking_rows = (
+            fetch_report_booking_rows(cursor, previous_start, previous_end)
+            if previous_start and previous_end
+            else []
+        )
+        previous_metrics, _ = build_report_metrics(previous_booking_rows)
+        revenue_trend_labels, revenue_trend_values = build_report_timeseries(
+            report_booking_rows,
+            range_start,
+            range_end,
+            report_period["period_key"],
+        )
+        top_event_labels, top_event_values = build_report_top_events(report_booking_rows)
+        category_labels, category_values = build_report_category_breakdown(report_booking_rows)
+        report_customers = build_report_customer_rows(report_booking_rows)
+        cancellation_summary = build_report_cancellation_summary(report_booking_rows)
+        waitlist_rows = fetch_report_waitlist_rows(cursor, range_start, range_end)
+        waitlist_summary = build_report_waitlist_summary(waitlist_rows, report_booking_rows)
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        writer.writerow(["Bristol Community Events Admin Report Export"])
+        writer.writerow(["Period", report_period["title"]])
+        writer.writerow(["Range start", range_start.isoformat()])
+        writer.writerow(["Range end", range_end.isoformat()])
+        writer.writerow([])
+        writer.writerow(["Summary"])
+        writer.writerow(["Metric", "Current", "Previous", "Delta", "Delta %"])
+        summary_rows = [
+            ("Revenue", report_metrics["revenue_total"], previous_metrics["revenue_total"]),
+            ("Tickets sold", report_metrics["tickets_sold"], previous_metrics["tickets_sold"]),
+            ("Active bookings", report_metrics["active_bookings_count"], previous_metrics["active_bookings_count"]),
+            ("Unique customers", report_metrics["unique_customers"], previous_metrics["unique_customers"]),
+            ("Repeat bookers", report_metrics["repeat_bookers"], previous_metrics["repeat_bookers"]),
+            ("Completion rate %", report_metrics["booking_completion_rate"], previous_metrics["booking_completion_rate"]),
+            ("Cancellation rate %", report_metrics["cancellation_rate"], previous_metrics["cancellation_rate"]),
+        ]
+        for label, current_value, previous_value in summary_rows:
+            delta = float(current_value or 0) - float(previous_value or 0)
+            pct = None
+            prev_num = float(previous_value or 0)
+            if prev_num:
+                pct = round((delta / prev_num) * 100, 1)
+            elif float(current_value or 0):
+                pct = 100.0
+            writer.writerow([label, current_value, previous_value, delta, pct if pct is not None else ""])
+
+        writer.writerow([])
+        writer.writerow(["Revenue over time"])
+        writer.writerow(["Bucket", "Revenue"])
+        for label, value in zip(revenue_trend_labels, revenue_trend_values):
+            writer.writerow([label, value])
+
+        writer.writerow([])
+        writer.writerow(["Top 5 events by revenue"])
+        writer.writerow(["Event", "Revenue"])
+        for label, value in zip(top_event_labels, top_event_values):
+            writer.writerow([label, value])
+
+        writer.writerow([])
+        writer.writerow(["Category breakdown"])
+        writer.writerow(["Category", "Tickets sold"])
+        for label, value in zip(category_labels, category_values):
+            writer.writerow([label, value])
+
+        writer.writerow([])
+        writer.writerow(["Customer report"])
+        writer.writerow(["Customer", "Bookings", "Spend"])
+        for row in report_customers:
+            writer.writerow([row["name"], row["bookings"], row["spend"]])
+
+        writer.writerow([])
+        writer.writerow(["Cancellation report"])
+        writer.writerow(["Cancelled bookings", cancellation_summary["cancelled_count"]])
+        writer.writerow(["Cancellation rate %", cancellation_summary["cancellation_rate"]])
+        writer.writerow(["Revenue lost", cancellation_summary["lost_revenue"]])
+        writer.writerow(["Cancellation charges collected", cancellation_summary["charge_collected"]])
+
+        writer.writerow([])
+        writer.writerow(["Waitlist report"])
+        writer.writerow(["Waitlist requests", waitlist_summary["total_requests"]])
+        writer.writerow(["Waitlist tickets", waitlist_summary["total_tickets"]])
+        writer.writerow(["Event", "Requests", "Tickets"])
+        for row in waitlist_summary["top_events"]:
+            writer.writerow([row["label"], row["requests"], row["tickets"]])
+
+        response = Response(output.getvalue(), mimetype="text/csv; charset=utf-8")
+        filename = f"admin_reports_{range_start.isoformat()}_{range_end.isoformat()}.csv"
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        return response
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@admin_required
+def admin_reports_export_pdf():
+    event_id_raw = request.args.get("event_id", "").strip()
+    venue_id_raw = request.args.get("venue_id", "").strip()
+    year_raw = request.args.get("year", "").strip()
+    chart_period_raw = request.args.get("chart_period", "").strip().lower()
+    start_date_raw = request.args.get("start_date", "").strip()
+    end_date_raw = request.args.get("end_date", "").strip()
+
+    report_data = build_admin_report_data(
+        event_id_raw,
+        venue_id_raw,
+        year_raw,
+        chart_period_raw,
+        start_date_raw,
+        end_date_raw,
+    )
+    pdf_bytes = build_admin_reports_pdf(report_data)
+    range_start = report_data.get("selected_start_date") or current_date().isoformat()
+    range_end = report_data.get("selected_end_date") or current_date().isoformat()
+    filename = f"admin_reports_{range_start}_{range_end}.pdf"
+    response = Response(pdf_bytes, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+
+
+@admin_required
+def admin_waitlist():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    waitlist_entries = fetch_active_waitlist_entries(
+        cursor,
+        limit=100,
+        order_by="CASE WHEN w.status = 'Offered' THEN 0 ELSE 1 END, w.created_at ASC, w.waitlist_id ASC",
+    )
+
+    queue_summary = {
+        "active_count": len(waitlist_entries),
+        "offered_count": sum(1 for entry in waitlist_entries if entry.get("status") == WAITLIST_STATUS_OFFERED),
+        "waiting_count": sum(1 for entry in waitlist_entries if entry.get("status") == WAITLIST_STATUS_WAITING),
+    }
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/waitlist.html",
+        waitlist_entries=waitlist_entries,
+        queue_summary=queue_summary,
     )
 
 

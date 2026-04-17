@@ -6,9 +6,9 @@
 <section class="report-hero">
     <div class="report-hero-copy">
         <p class="report-eyebrow">Analytics overview</p>
-        <h1 style="margin: 0;">Reports</h1>
+        <h1 style="margin: 0;">{{ report_period.title }}</h1>
         <p style="margin-top: .55rem; max-width: 62ch;">
-            Track bookings, revenue, waitlist activity, and venue performance from one place.
+            {{ report_period.note }}
         </p>
     </div>
 
@@ -18,23 +18,31 @@
             <strong>{{ selected_year }}</strong>
         </div>
         <div class="report-hero-stat">
-            <span>Tickets Sold</span>
-            <strong>{{ year_report.tickets_sold or 0 }}</strong>
+            <span>Year Revenue</span>
+            <strong>&pound;{{ "%.2f"|format(year_report.revenue_total or 0) }}</strong>
         </div>
         <div class="report-hero-stat">
-            <span>Revenue</span>
-            <strong>&pound;{{ "%.2f"|format(year_report.revenue_total or 0) }}</strong>
+            <span>Range Tickets</span>
+            <strong>{{ report_metrics.tickets_sold or 0 }}</strong>
+        </div>
+        <div class="report-hero-stat">
+            <span>Completion</span>
+            <strong>{{ report_completion_rate }}%</strong>
         </div>
     </div>
 </section>
 
 <section class="receipt-card report-filters-card" style="margin-top: 1rem;">
-    <div class="report-panel-header">
+    <div class="report-section-header">
         <div>
             <h2 style="margin: 0;">Filters</h2>
-            <p class="report-panel-note">Narrow the data by event, venue, year, or chart range.</p>
+            <p class="report-section-note">Narrow the data by event, venue, year, or a custom date range.</p>
         </div>
-        <a class="btn btn-soft" href="{{ url_for('admin_dashboard') }}" style="width: auto;">Back to Dashboard</a>
+        <div style="display:flex; gap:.5rem; flex-wrap:wrap; justify-content:flex-end;">
+            <a class="btn btn-soft report-export-btn" href="{{ url_for('admin_reports_export_csv', event_id=selected_event_id, venue_id=selected_venue_id, year=selected_year, chart_period=selected_chart_period, start_date=selected_start_date, end_date=selected_end_date) }}">Export CSV</a>
+            <a class="btn btn-soft report-export-btn" href="{{ url_for('admin_reports_export_pdf', event_id=selected_event_id, venue_id=selected_venue_id, year=selected_year, chart_period=selected_chart_period, start_date=selected_start_date, end_date=selected_end_date) }}">Export PDF</a>
+            <a class="btn btn-soft report-export-btn" href="{{ url_for('admin_dashboard') }}">Back to Dashboard</a>
+        </div>
     </div>
 
     <form method="GET" action="{{ url_for('admin_reports') }}" class="report-filter-grid">
@@ -67,7 +75,25 @@
             <input type="number" name="year" min="2000" max="2100" value="{{ selected_year }}" />
         </div>
 
-        <input type="hidden" name="chart_period" value="{{ selected_chart_period }}" />
+        <div class="form-group">
+            <label for="chart_period">Chart Range</label>
+            <select id="chart_period" name="chart_period">
+                <option value="weekly" {% if selected_chart_period == 'weekly' %}selected{% endif %}>Weekly</option>
+                <option value="monthly" {% if selected_chart_period == 'monthly' %}selected{% endif %}>Monthly</option>
+                <option value="yearly" {% if selected_chart_period == 'yearly' %}selected{% endif %}>Yearly</option>
+                <option value="custom" {% if selected_chart_period == 'custom' %}selected{% endif %}>Custom</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="start_date">Start Date</label>
+            <input type="date" id="start_date" name="start_date" value="{{ selected_start_date }}" />
+        </div>
+
+        <div class="form-group">
+            <label for="end_date">End Date</label>
+            <input type="date" id="end_date" name="end_date" value="{{ selected_end_date }}" />
+        </div>
 
         <div style="grid-column: 1 / -1; display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap; justify-content: flex-end;">
             <button type="submit" class="btn" style="width: auto;">Run Report</button>
@@ -76,66 +102,256 @@
     </form>
 </section>
 
-<div class="report-kpi-grid" style="margin-top: 1rem;">
-    <article class="admin-card report-kpi-card is-primary">
-        <div class="label">Events in {{ selected_year }}</div>
-        <div class="value">{{ year_report.total_events_in_year or 0 }}</div>
-    </article>
-    <article class="admin-card report-kpi-card is-success">
-        <div class="label">Successful Events</div>
-        <div class="value">{{ year_report.successful_events_count or 0 }}</div>
-    </article>
-    <article class="admin-card report-kpi-card is-warning">
-        <div class="label">Tickets Sold</div>
-        <div class="value">{{ year_report.tickets_sold or 0 }}</div>
-    </article>
-    <article class="admin-card report-kpi-card is-accent">
+<div class="report-summary-grid" style="margin-top: 1rem;">
+    <article class="admin-card report-summary-card">
         <div class="label">Revenue</div>
-        <div class="value">&pound;{{ "%.2f"|format(year_report.revenue_total or 0) }}</div>
+        <div class="value">&pound;{{ "%.2f"|format(report_metrics.revenue_total or 0) }}</div>
+        <div class="comparison {% if report_comparison.revenue.delta >= 0 %}is-up{% else %}is-down{% endif %}">
+            {% if report_comparison.revenue.pct is not none %}
+                {{ "+" if report_comparison.revenue.delta >= 0 else "" }}{{ "%.1f"|format(report_comparison.revenue.pct) }}% vs previous period
+            {% else %}
+                No previous period to compare
+            {% endif %}
+        </div>
     </article>
-    <article class="admin-card report-kpi-card is-warning">
-        <div class="label">Cost</div>
-        <div class="value">&pound;{{ "%.2f"|format(year_report.cost_total or 0) }}</div>
+    <article class="admin-card report-summary-card">
+        <div class="label">Tickets Sold</div>
+        <div class="value">{{ report_metrics.tickets_sold or 0 }}</div>
+        <div class="comparison {% if report_comparison.tickets.delta >= 0 %}is-up{% else %}is-down{% endif %}">
+            {% if report_comparison.tickets.pct is not none %}
+                {{ "+" if report_comparison.tickets.delta >= 0 else "" }}{{ "%.1f"|format(report_comparison.tickets.pct) }}% vs previous period
+            {% else %}
+                No previous period to compare
+            {% endif %}
+        </div>
     </article>
-    <article class="admin-card report-kpi-card is-danger">
-        <div class="label">Profit</div>
-        <div class="value">&pound;{{ "%.2f"|format(year_report.profit_total or 0) }}</div>
+    <article class="admin-card report-summary-card">
+        <div class="label">Active Bookings</div>
+        <div class="value">{{ report_metrics.active_bookings_count or 0 }}</div>
+        <div class="comparison {% if report_comparison.bookings.delta >= 0 %}is-up{% else %}is-down{% endif %}">
+            {% if report_comparison.bookings.pct is not none %}
+                {{ "+" if report_comparison.bookings.delta >= 0 else "" }}{{ "%.1f"|format(report_comparison.bookings.pct) }}% vs previous period
+            {% else %}
+                No previous period to compare
+            {% endif %}
+        </div>
     </article>
-    <article class="admin-card report-kpi-card is-primary">
-        <div class="label">Fully Booked</div>
-        <div class="value">{{ year_report.fully_booked_events_count or 0 }}</div>
+    <article class="admin-card report-summary-card">
+        <div class="label">Unique Customers</div>
+        <div class="value">{{ report_metrics.unique_customers or 0 }}</div>
+        <div class="comparison {% if report_comparison.customers.delta >= 0 %}is-up{% else %}is-down{% endif %}">
+            {% if report_comparison.customers.pct is not none %}
+                {{ "+" if report_comparison.customers.delta >= 0 else "" }}{{ "%.1f"|format(report_comparison.customers.pct) }}% vs previous period
+            {% else %}
+                No previous period to compare
+            {% endif %}
+        </div>
+    </article>
+    <article class="admin-card report-summary-card">
+        <div class="label">Repeat Bookers</div>
+        <div class="value">{{ report_metrics.repeat_bookers or 0 }}</div>
+        <div class="comparison is-flat">Customers with more than one booking in range</div>
+    </article>
+    <article class="admin-card report-summary-card">
+        <div class="label">Avg Spend</div>
+        <div class="value">&pound;{{ "%.2f"|format(report_metrics.avg_spend_per_customer or 0) }}</div>
+        <div class="comparison is-flat">Per unique customer</div>
+    </article>
+    <article class="admin-card report-summary-card">
+        <div class="label">Completion Rate</div>
+        <div class="value">{{ report_completion_rate }}%</div>
+        <div class="comparison is-flat">Completed bookings vs all booking attempts</div>
+    </article>
+    <article class="admin-card report-summary-card">
+        <div class="label">Cancellation Rate</div>
+        <div class="value">{{ report_cancellation_rate }}%</div>
+        <div class="comparison is-flat">Cancelled bookings vs all booking attempts</div>
     </article>
 </div>
 
 <section class="receipt-card report-chart-card report-panel" style="margin-top: 1rem;">
     <div class="report-panel-header">
         <div>
-            <h2 style="margin: 0;">{{ year_report.event_mix_title or 'Yearly Event Mix' }}</h2>
+            <h2 style="margin: 0;">Charts & Visualisations</h2>
+            <p class="report-panel-note">Revenue trend, top performers, category mix, and booking activity for the selected period.</p>
+        </div>
+    </div>
+
+    <div class="report-chart-grid" style="margin-top: .75rem;">
+        <div class="report-chart-panel">
+            <div class="report-panel-header">
+                <div>
+                    <h3 style="margin: 0;">Revenue over time</h3>
+                    <p class="report-panel-note">Shows how income changes across the selected range.</p>
+                </div>
+            </div>
+            <div class="report-chart-wrap">
+                <canvas id="reportRevenueChart" aria-label="Revenue over time chart" role="img"></canvas>
+            </div>
+        </div>
+
+        <div class="report-chart-panel">
+            <div class="report-panel-header">
+                <div>
+                    <h3 style="margin: 0;">Top 5 events by revenue</h3>
+                    <p class="report-panel-note">Quick visual of the strongest performers.</p>
+                </div>
+            </div>
+            <div class="report-chart-wrap">
+                <canvas id="reportTopEventsChart" aria-label="Top events by revenue chart" role="img"></canvas>
+            </div>
+        </div>
+
+        <div class="report-chart-panel">
+            <div class="report-panel-header">
+                <div>
+                    <h3 style="margin: 0;">Category breakdown</h3>
+                    <p class="report-panel-note">Tickets sold by category across the selected range.</p>
+                </div>
+            </div>
+            <div class="report-chart-wrap">
+                <canvas id="reportCategoryChart" aria-label="Category breakdown chart" role="img"></canvas>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="receipt-card report-chart-card report-panel" style="margin-top: 1rem;">
+    <div class="report-panel-header">
+        <div>
+            <h2 style="margin: 0;">{{ year_report.event_mix_title or 'Event Mix' }}</h2>
             <p class="report-panel-note">{{ year_report.event_mix_note or 'Breakdown of events by booking activity.' }}</p>
         </div>
-        <div class="report-chart-tools">
-            <form method="GET" action="{{ url_for('admin_reports') }}" class="report-chart-form">
-                <input type="hidden" name="event_id" value="{{ selected_event_id }}">
-                <input type="hidden" name="venue_id" value="{{ selected_venue_id }}">
-                <input type="hidden" name="year" value="{{ selected_year }}">
-                <label for="chart_period_select">Chart Range</label>
-                <select id="chart_period_select" name="chart_period" onchange="this.form.submit()">
-                    <option value="weekly" {% if selected_chart_period == 'weekly' %}selected{% endif %}>Weekly</option>
-                    <option value="monthly" {% if selected_chart_period == 'monthly' %}selected{% endif %}>Monthly</option>
-                    <option value="yearly" {% if selected_chart_period == 'yearly' %}selected{% endif %}>Yearly</option>
-                </select>
-            </form>
-            <div class="report-chart-legend">
+    </div>
+    <div class="report-chart-grid" style="margin-top: .75rem;">
+        <div class="report-chart-panel">
+            <div class="report-chart-legend" style="margin-bottom:.5rem;">
                 <span><i style="background:#1a5276;"></i>Active booked</span>
                 <span><i style="background:#e74c3c;"></i>Cancelled only</span>
                 <span><i style="background:#f39c12;"></i>No booking</span>
             </div>
+            <div class="report-chart-wrap">
+                <canvas id="yearEventMixChart" aria-label="Event mix pie chart" role="img"></canvas>
+            </div>
         </div>
     </div>
-    <div class="report-chart-wrap">
-        <canvas id="yearEventMixChart" aria-label="Yearly event mix pie chart" role="img"></canvas>
-    </div>
 </section>
+
+<div class="report-data-grid" style="margin-top: 1rem;">
+    <section class="receipt-card report-panel">
+        <div class="report-panel-header">
+            <div>
+                <h2 style="margin: 0;">Customer Report</h2>
+                <p class="report-panel-note">Unique customers, repeat bookers, and average spend.</p>
+            </div>
+        </div>
+        <div class="report-stat-list" style="margin-top:.75rem;">
+            <div class="report-stat-item"><span>Unique customers</span><strong>{{ report_metrics.unique_customers or 0 }}</strong></div>
+            <div class="report-stat-item"><span>Repeat bookers</span><strong>{{ report_metrics.repeat_bookers or 0 }}</strong></div>
+            <div class="report-stat-item"><span>Average spend</span><strong>&pound;{{ "%.2f"|format(report_metrics.avg_spend_per_customer or 0) }}</strong></div>
+        </div>
+        <div class="admin-table-wrap" style="margin-top:.75rem;">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Customer</th>
+                        <th>Bookings</th>
+                        <th>Spend</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if report_customers %}
+                        {% for customer in report_customers %}
+                        <tr>
+                            <td>{{ customer.name }}</td>
+                            <td>{{ customer.bookings }}</td>
+                            <td>&pound;{{ "%.2f"|format(customer.spend or 0) }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="3">No customer data found for the selected range.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="receipt-card report-panel">
+        <div class="report-panel-header">
+            <div>
+                <h2 style="margin: 0;">Cancellation Report</h2>
+                <p class="report-panel-note">Cancellation rate and revenue lost to cancelled bookings.</p>
+            </div>
+        </div>
+        <div class="report-stat-list" style="margin-top:.75rem;">
+            <div class="report-stat-item"><span>Cancelled bookings</span><strong>{{ cancellation_summary.cancelled_count or 0 }}</strong></div>
+            <div class="report-stat-item"><span>Cancellation rate</span><strong>{{ cancellation_summary.cancellation_rate or 0 }}%</strong></div>
+            <div class="report-stat-item"><span>Revenue lost</span><strong>&pound;{{ "%.2f"|format(cancellation_summary.lost_revenue or 0) }}</strong></div>
+            <div class="report-stat-item"><span>Charges collected</span><strong>&pound;{{ "%.2f"|format(cancellation_summary.charge_collected or 0) }}</strong></div>
+        </div>
+        <div class="admin-table-wrap" style="margin-top:.75rem;">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>Cancellations</th>
+                        <th>Revenue lost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if cancellation_summary.top_events %}
+                        {% for item in cancellation_summary.top_events %}
+                        <tr>
+                            <td>{{ item.label }}</td>
+                            <td>{{ item.count }}</td>
+                            <td>&pound;{{ "%.2f"|format(item.lost or 0) }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="3">No cancellations found for the selected range.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="receipt-card report-panel">
+        <div class="report-panel-header">
+            <div>
+                <h2 style="margin: 0;">Waitlist Report</h2>
+                <p class="report-panel-note">Demand beyond capacity and the events generating the most interest.</p>
+            </div>
+        </div>
+        <div class="report-stat-list" style="margin-top:.75rem;">
+            <div class="report-stat-item"><span>Waitlist requests</span><strong>{{ waitlist_summary.total_requests or 0 }}</strong></div>
+            <div class="report-stat-item"><span>Waitlist tickets</span><strong>{{ waitlist_summary.total_tickets or 0 }}</strong></div>
+        </div>
+        <div class="admin-table-wrap" style="margin-top:.75rem;">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>Requests</th>
+                        <th>Tickets</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if waitlist_summary.top_events %}
+                        {% for item in waitlist_summary.top_events %}
+                        <tr>
+                            <td>{{ item.label }}</td>
+                            <td>{{ item.requests }}</td>
+                            <td>{{ item.tickets }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="3">No waitlist activity found for the selected range.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
 
 <div class="report-panels" style="margin-top: 1rem;">
     <section class="receipt-card report-panel">
@@ -305,54 +521,176 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (() => {
-    const canvas = document.getElementById('yearEventMixChart');
-    if (!canvas || typeof Chart === 'undefined') {
+    if (typeof Chart === 'undefined') {
         return;
     }
 
-    const labels = {{ year_report.event_mix_labels | tojson }};
-    const values = {{ year_report.event_mix_values | tojson }};
-    const colors = {{ year_report.event_mix_colors | tojson }};
-    const total = values.reduce((sum, value) => sum + value, 0);
-
-    if (!total) {
+    function renderEmpty(canvas, message) {
         const parent = canvas.parentElement;
         if (parent) {
-            parent.innerHTML = '<p class="report-chart-empty">No events were found for the selected year.</p>';
+            parent.innerHTML = `<p class="report-chart-empty">${message}</p>`;
         }
-        return;
     }
 
-    new Chart(canvas, {
-        type: 'pie',
-        data: {
-            labels,
-            datasets: [{
-                data: values,
-                backgroundColor: colors,
-                borderColor: '#ffffff',
-                borderWidth: 2,
-            }],
+    function renderChart(canvasId, type, labels, values, dataset, options, emptyMessage) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) {
+            return;
+        }
+
+        const total = values.reduce((sum, value) => sum + Number(value || 0), 0);
+        if (!total) {
+            renderEmpty(canvas, emptyMessage);
+            return;
+        }
+
+        new Chart(canvas, {
+            type,
+            data: {
+                labels,
+                datasets: [dataset],
+            },
+            options,
+        });
+    }
+
+    const revenueLabels = {{ report_revenue_trend_labels | tojson }};
+    const revenueValues = {{ report_revenue_trend_values | tojson }};
+    renderChart(
+        'reportRevenueChart',
+        'line',
+        revenueLabels,
+        revenueValues,
+        {
+            data: revenueValues,
+            borderColor: '#1a5276',
+            backgroundColor: 'rgba(26, 82, 118, 0.15)',
+            tension: 0.35,
+            fill: true,
+            pointRadius: 3,
+            pointHoverRadius: 5,
         },
-        options: {
+        {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false,
-                },
-                tooltip: {
-                    callbacks: {
-                        label(context) {
-                            const value = context.raw || 0;
-                            const percentage = total ? Math.round((value / total) * 100) : 0;
-                            return `${context.label}: ${value} (${percentage}%)`;
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false } },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback(value) {
+                            return `£${value}`;
                         },
                     },
                 },
             },
         },
-    });
+        'No revenue data found for the selected range.'
+    );
+
+    const topEventLabels = {{ report_top_event_labels | tojson }};
+    const topEventValues = {{ report_top_event_values | tojson }};
+    renderChart(
+        'reportTopEventsChart',
+        'bar',
+        topEventLabels,
+        topEventValues,
+        {
+            data: topEventValues,
+            backgroundColor: '#0f766e',
+            borderColor: '#0f766e',
+            borderWidth: 1,
+            borderRadius: 8,
+        },
+        {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback(value) {
+                            return `£${value}`;
+                        },
+                    },
+                },
+                y: { grid: { display: false } },
+            },
+        },
+        'No top event data found for the selected range.'
+    );
+
+    const categoryLabels = {{ report_category_labels | tojson }};
+    const categoryValues = {{ report_category_values | tojson }};
+    renderChart(
+        'reportCategoryChart',
+        'doughnut',
+        categoryLabels,
+        categoryValues,
+        {
+            data: categoryValues,
+            backgroundColor: ['#1a5276', '#0f766e', '#f39c12', '#e74c3c', '#8b5cf6', '#64748b'],
+            borderColor: '#ffffff',
+            borderWidth: 2,
+        },
+        {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                },
+            },
+        },
+        'No category data found for the selected range.'
+    );
+
+    const mixCanvas = document.getElementById('yearEventMixChart');
+    if (mixCanvas) {
+        const mixLabels = {{ year_report.event_mix_labels | tojson }};
+        const mixValues = {{ year_report.event_mix_values | tojson }};
+        const mixColors = {{ year_report.event_mix_colors | tojson }};
+        const mixTotal = mixValues.reduce((sum, value) => sum + Number(value || 0), 0);
+
+        if (!mixTotal) {
+            renderEmpty(mixCanvas, 'No events were found for the selected range.');
+            return;
+        }
+
+        new Chart(mixCanvas, {
+            type: 'pie',
+            data: {
+                labels: mixLabels,
+                datasets: [{
+                    data: mixValues,
+                    backgroundColor: mixColors,
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false,
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label(context) {
+                                const value = context.raw || 0;
+                                const percentage = mixTotal ? Math.round((value / mixTotal) * 100) : 0;
+                                return `${context.label}: ${value} (${percentage}%)`;
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
 })();
 </script>
 {% endblock %}

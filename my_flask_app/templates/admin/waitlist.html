@@ -1,0 +1,84 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Admin Waitlist | Bristol Community Events{% endblock %}
+
+{% block admin_content %}
+<section class="report-hero">
+    <div class="report-hero-copy">
+        <p class="report-eyebrow">Queue management</p>
+        <h1 style="margin: 0;">Waitlist</h1>
+        <p style="margin-top: .55rem; max-width: 62ch;">
+            Review active waitlist requests and live offers across the platform.
+        </p>
+    </div>
+
+    <div class="report-hero-grid">
+        <div class="report-hero-stat">
+            <span>Active</span>
+            <strong>{{ queue_summary.active_count or 0 }}</strong>
+        </div>
+        <div class="report-hero-stat">
+            <span>Waiting</span>
+            <strong>{{ queue_summary.waiting_count or 0 }}</strong>
+        </div>
+        <div class="report-hero-stat">
+            <span>Offered</span>
+            <strong>{{ queue_summary.offered_count or 0 }}</strong>
+        </div>
+    </div>
+</section>
+
+<section class="receipt-card report-panel report-table-card" style="margin-top: 1rem;">
+    <div class="report-panel-header">
+        <div>
+            <h2 style="margin: 0;">Waitlist Queue</h2>
+            <p class="report-panel-note">Active waiting requests and live offers across the system.</p>
+        </div>
+    </div>
+
+    {% if waitlist_entries %}
+        <div class="admin-table-wrap" style="margin-top: .75rem;">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>User</th>
+                        <th>Tickets</th>
+                        <th>Days</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Offer Expires</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in waitlist_entries %}
+                    <tr>
+                        <td>
+                            <strong>{{ entry.event_name }}</strong><br />
+                            <span style="color:#52606d;">{{ entry.event_date.strftime('%b %d, %Y') if entry.event_date else '-' }}</span>
+                        </td>
+                        <td>
+                            <strong>{{ entry.full_name }}</strong><br />
+                            <span style="color:#52606d;">{{ entry.email }}</span>
+                        </td>
+                        <td>{{ entry.requested_tickets }}</td>
+                        <td>{{ entry.booking_days }}</td>
+                        <td><span class="status-badge status-{{ entry.status|lower }}">{{ entry.status }}</span></td>
+                        <td>{{ entry.created_at.strftime('%b %d, %Y %H:%M') if entry.created_at else '-' }}</td>
+                        <td>
+                            {% if entry.offer_expires_at %}
+                                {{ entry.offer_expires_at.strftime('%b %d, %Y %H:%M') }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="report-empty">No active waitlist entries were found.</p>
+    {% endif %}
+</section>
+{% endblock %}

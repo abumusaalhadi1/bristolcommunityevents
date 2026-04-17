@@ -73,10 +73,10 @@
                             <div class="message-card-grid">
                                 <div>
                                     <div class="message-label">Event window</div>
-                                    <div class="message-content">
-                                        {{ entry.event_date.strftime('%B %d, %Y') if entry.event_date else '-' }}
+                                    <div class="message-content waitlist-window">
+                                        <span>{{ entry.event_date.strftime('%B %d, %Y') if entry.event_date else '-' }}</span>
                                         {% if entry.event_end_date and entry.event_end_date != entry.event_date %}
-                                            - {{ entry.event_end_date.strftime('%B %d, %Y') }}
+                                            <span>to {{ entry.event_end_date.strftime('%B %d, %Y') }}</span>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -95,6 +95,9 @@
                             <div class="message-card-actions">
                                 {% if entry.status == 'Offered' and (not entry.offer_expires_at or entry.offer_expires_at >= now) %}
                                     <a class="btn" href="{{ url_for('accept_waitlist_offer', waitlist_id=entry.waitlist_id) }}" style="width: auto; background: #2c3e50;">Complete Booking</a>
+                                    <form method="POST" action="{{ url_for('reject_waitlist_offer', waitlist_id=entry.waitlist_id) }}" onsubmit="return confirm('Reject this waitlist offer and offer it to the next person in line?');">
+                                        <button type="submit" class="message-delete-btn">Reject Offer</button>
+                                    </form>
                                 {% elif entry.status == 'Waiting' %}
                                     <span class="message-meta">You're still in the queue.</span>
                                 {% elif entry.status == 'Converted' %}

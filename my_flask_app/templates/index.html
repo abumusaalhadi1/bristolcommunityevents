@@ -11,14 +11,25 @@
 
                 <form class="hero-search" action="{{ url_for('events') }}" method="get">
                     <input type="text" name="q" placeholder="Search events, venues, or locations..." value="{{ request.args.get('q', '') }}">
-                    <select name="category">
-                        <option value="">All Categories</option>
-                        {% for category in categories %}
-                            <option value="{{ category.category_name }}" {% if request.args.get('category', '') == category.category_name %}selected{% endif %}>
-                                {{ category.category_name }}
-                            </option>
-                        {% endfor %}
-                    </select>
+                    <div class="hero-category-filter" data-category-dropdown>
+                        <input type="hidden" name="category" value="{{ request.args.get('category', '') }}" data-category-input>
+                        <button type="button" class="hero-category-trigger" aria-haspopup="listbox" aria-expanded="false" data-category-trigger>
+                            <span data-category-label>
+                                {{ request.args.get('category', '') if request.args.get('category', '') else 'All Categories' }}
+                            </span>
+                            <span class="hero-category-caret" aria-hidden="true"></span>
+                        </button>
+                        <div class="hero-category-menu" role="listbox" aria-label="Category selection" data-category-menu hidden>
+                            <button type="button" class="hero-category-option {% if not request.args.get('category', '') %}is-selected{% endif %}" data-category-option data-value="" data-label="All Categories" role="option" aria-selected="{% if not request.args.get('category', '') %}true{% else %}false{% endif %}">
+                                All Categories
+                            </button>
+                            {% for category in categories %}
+                                <button type="button" class="hero-category-option {% if request.args.get('category', '') == category.category_name %}is-selected{% endif %}" data-category-option data-value="{{ category.category_name }}" data-label="{{ category.category_name }}" role="option" aria-selected="{% if request.args.get('category', '') == category.category_name %}true{% else %}false{% endif %}">
+                                    {{ category.category_name }}
+                                </button>
+                            {% endfor %}
+                        </div>
+                    </div>
                     <button type="submit" class="btn">Search</button>
                 </form>
 

@@ -21,6 +21,7 @@
                 <a href="{{ url_for('admin_contact_messages') }}" class="{% if request.endpoint in ['admin_contact_messages','admin_reply_contact_message'] %}active{% endif %}">Messages</a>
                 <a href="{{ url_for('admin_reviews') }}" class="{% if request.endpoint in ['admin_reviews','admin_approve_review','admin_reject_review','admin_delete_review'] %}active{% endif %}">Reviews</a>
                 <a href="{{ url_for('admin_subscribers') }}" class="{% if request.endpoint == 'admin_subscribers' %}active{% endif %}">Subscribers</a>
+                <a href="{{ url_for('admin_waitlist') }}" class="{% if request.endpoint == 'admin_waitlist' %}active{% endif %}">Waitlist</a>
                 <a href="{{ url_for('admin_reports') }}" class="{% if request.endpoint == 'admin_reports' %}active{% endif %}">Reports</a>
                 <a href="{{ url_for('admin_logout') }}">Logout</a>
             </nav>

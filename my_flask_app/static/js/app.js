@@ -1,12 +1,116 @@
 (function () {
     const hamburger = document.querySelector('.hamburger');
     const navList = document.querySelector('nav ul');
+    const flashMessages = Array.from(document.querySelectorAll('[data-flash-message]'));
+    const categoryDropdown = document.querySelector('[data-category-dropdown]');
 
     if (hamburger && navList) {
         hamburger.addEventListener('click', function () {
             navList.classList.toggle('show');
         });
     }
+
+    if (categoryDropdown) {
+        const trigger = categoryDropdown.querySelector('[data-category-trigger]');
+        const menu = categoryDropdown.querySelector('[data-category-menu]');
+        const input = categoryDropdown.querySelector('[data-category-input]');
+        const label = categoryDropdown.querySelector('[data-category-label]');
+        const options = Array.from(categoryDropdown.querySelectorAll('[data-category-option]'));
+
+        function setExpanded(expanded) {
+            if (!trigger || !menu) return;
+            trigger.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            menu.hidden = !expanded;
+        }
+
+        function closeDropdown() {
+            setExpanded(false);
+        }
+
+        if (trigger && menu) {
+            trigger.addEventListener('click', () => {
+                const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
+                setExpanded(!isExpanded);
+            });
+        }
+
+        options.forEach((option) => {
+            option.addEventListener('click', () => {
+                const value = option.dataset.value || '';
+                const optionLabel = option.dataset.label || option.textContent.trim();
+
+                if (input) {
+                    input.value = value;
+                }
+                if (label) {
+                    label.textContent = optionLabel;
+                }
+
+                options.forEach((item) => {
+                    const selected = item === option;
+                    item.classList.toggle('is-selected', selected);
+                    item.setAttribute('aria-selected', selected ? 'true' : 'false');
+                });
+
+                closeDropdown();
+            });
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!categoryDropdown.contains(event.target)) {
+                closeDropdown();
+            }
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeDropdown();
+                if (trigger) {
+                    trigger.focus();
+                }
+            }
+        });
+    }
+
+    flashMessages.forEach((flashMessage) => {
+        const closeButton = flashMessage.querySelector('.flash-close');
+        let dismissTimer = null;
+
+        function dismissFlash() {
+            if (flashMessage.classList.contains('is-dismissed')) {
+                return;
+            }
+
+            if (dismissTimer) {
+                window.clearTimeout(dismissTimer);
+                dismissTimer = null;
+            }
+
+            flashMessage.classList.add('is-dismissed');
+            window.setTimeout(() => {
+                flashMessage.remove();
+            }, 280);
+        }
+
+        if (closeButton) {
+            closeButton.addEventListener('click', dismissFlash);
+        }
+
+        dismissTimer = window.setTimeout(dismissFlash, 4000);
+
+        flashMessage.addEventListener('mouseenter', () => {
+            if (dismissTimer) {
+                window.clearTimeout(dismissTimer);
+                dismissTimer = null;
+            }
+        });
+
+        flashMessage.addEventListener('mouseleave', () => {
+            if (!dismissTimer && !flashMessage.classList.contains('is-dismissed')) {
+                dismissTimer = window.setTimeout(dismissFlash, 1500);
+            }
+        });
+    });
 
     const form = document.getElementById('bookingForm');
     const proceedBtn = document.getElementById('proceedToPayment');
