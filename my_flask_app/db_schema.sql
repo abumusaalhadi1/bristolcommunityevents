@@ -58,6 +58,22 @@ CREATE TABLE password_reset_tokens (
   FOREIGN KEY (requested_by) REFERENCES users(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE role_invitation_tokens (
+  invitation_id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  invited_by INT NULL,
+  role VARCHAR(20) NOT NULL DEFAULT 'user',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  UNIQUE KEY uq_role_invitation_tokens_token_hash (token_hash),
+  KEY idx_role_invitation_tokens_user_id (user_id),
+  KEY idx_role_invitation_tokens_expires_at (expires_at),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (invited_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE newsletter_subscribers (
   subscriber_id INT PRIMARY KEY AUTO_INCREMENT,
   email VARCHAR(255) UNIQUE NOT NULL,

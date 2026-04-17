@@ -117,7 +117,10 @@ REVIEW_STATUSES = (
     REVIEW_STATUS_REJECTED,
 )
 PASSWORD_RESET_TOKEN_TTL_HOURS = 24
+ROLE_INVITE_TOKEN_TTL_HOURS = 72
 PASSWORD_VERSION_SESSION_KEY = "auth_password_changed_at"
+
+ALLOWED_USER_ROLES = {ROLE_USER, ROLE_ADMIN}
 
 _db_initialized = False
 
@@ -206,6 +209,11 @@ def is_valid_email(value: str) -> bool:
 def normalize_payment_method(value: str) -> str:
     payment_method = (value or "").strip().lower()
     return payment_method if payment_method in PAYMENT_METHODS else ""
+
+
+def normalize_user_role(value: str) -> str:
+    role = (value or "").strip().lower()
+    return role if role in ALLOWED_USER_ROLES else ROLE_USER
 
 
 def payment_method_label(payment_method: str) -> str:
@@ -940,6 +948,10 @@ def password_reset_token_hash(token: str) -> str:
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
+def role_invitation_token_hash(token: str) -> str:
+    return hashlib.sha256(("invite:" + (token or "")).encode("utf-8")).hexdigest()
+
+
 def build_password_reset_email(user, reset_url: str, _expires_at) -> tuple[str, str]:
     user_name = (user.get("full_name") or "there").strip() or "there"
     body = textwrap.dedent(
@@ -963,6 +975,32 @@ def build_password_reset_email(user, reset_url: str, _expires_at) -> tuple[str, 
         """
     ).strip()
     subject = "Reset your Bristol Community Events password"
+    return subject, body
+
+
+def build_access_invitation_email(user, invite_url: str, _expires_at, role: str | None = None) -> tuple[str, str]:
+    user_name = (user.get("full_name") or "there").strip() or "there"
+    role = (role or user.get("role") or ROLE_USER).strip().lower()
+    role_label = "administrator" if role == ROLE_ADMIN else "member"
+    body = textwrap.dedent(
+        f"""\
+        Dear {user_name},
+
+        You have been invited to join Bristol Community Events as a {role_label}.
+
+        To activate your access, please click the secure link below and set your password:
+
+        {invite_url}
+
+        This link will expire in {ROLE_INVITE_TOKEN_TTL_HOURS} hours for security reasons.
+
+        If you were not expecting this invitation, you can safely ignore this email.
+
+        Kind regards,
+        Bristol Community Events Team
+        """
+    ).strip()
+    subject = "Your Bristol Community Events access invitation"
     return subject, body
 
 
@@ -1069,6 +1107,105 @@ def delete_password_reset_token(cursor, token_hash: str):
     )
 
 
+def create_role_invitation_request(cursor, user_id: int, role: str, invited_by: int | None):
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = role_invitation_token_hash(raw_token)
+    now = current_datetime()
+    expires_at = now + timedelta(hours=ROLE_INVITE_TOKEN_TTL_HOURS)
+
+    cursor.execute(
+        """
+        INSERT INTO role_invitation_tokens (
+            user_id, token_hash, invited_by, role, created_at, expires_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (user_id, token_hash, invited_by, role, now, expires_at),
+    )
+    return raw_token, expires_at, token_hash
+
+
+def fetch_role_invitation_request(cursor, token: str):
+    token_hash = role_invitation_token_hash(token)
+    cursor.execute(
+        """
+        SELECT t.invitation_id, t.user_id, t.token_hash, t.role, t.created_at, t.expires_at, t.used_at,
+               t.invited_by, u.full_name, u.email
+        FROM role_invitation_tokens t
+        JOIN users u ON u.user_id = t.user_id
+        WHERE t.token_hash = %s
+        LIMIT 1
+        """,
+        (token_hash,),
+    )
+    return cursor.fetchone()
+
+
+def fetch_role_invitation_by_id(cursor, invitation_id: int):
+    cursor.execute(
+        """
+        SELECT t.invitation_id, t.user_id, t.token_hash, t.role, t.created_at, t.expires_at, t.used_at,
+               t.invited_by, u.full_name, u.email,
+               inviter.full_name AS invited_by_name, inviter.email AS invited_by_email
+        FROM role_invitation_tokens t
+        JOIN users u ON u.user_id = t.user_id
+        LEFT JOIN users inviter ON inviter.user_id = t.invited_by
+        WHERE t.invitation_id = %s
+        LIMIT 1
+        """,
+        (invitation_id,),
+    )
+    return cursor.fetchone()
+
+
+def fetch_pending_role_invitations(cursor):
+    cursor.execute(
+        """
+        SELECT t.invitation_id, t.user_id, t.role, t.created_at, t.expires_at, t.used_at,
+               u.full_name, u.email,
+               inviter.full_name AS invited_by_name, inviter.email AS invited_by_email
+        FROM role_invitation_tokens t
+        JOIN users u ON u.user_id = t.user_id
+        LEFT JOIN users inviter ON inviter.user_id = t.invited_by
+        WHERE t.used_at IS NULL
+        ORDER BY t.created_at DESC, t.invitation_id DESC
+        """
+    )
+    return cursor.fetchall()
+
+
+def invalidate_role_invitation_tokens(cursor, user_id: int):
+    cursor.execute(
+        """
+        UPDATE role_invitation_tokens
+        SET used_at = %s
+        WHERE user_id = %s AND used_at IS NULL
+        """,
+        (current_datetime(), user_id),
+    )
+
+
+def invalidate_other_role_invitation_tokens(cursor, user_id: int, keep_token_hash: str):
+    cursor.execute(
+        """
+        UPDATE role_invitation_tokens
+        SET used_at = %s
+        WHERE user_id = %s AND token_hash <> %s AND used_at IS NULL
+        """,
+        (current_datetime(), user_id, keep_token_hash),
+    )
+
+
+def delete_role_invitation_token(cursor, token_hash: str):
+    cursor.execute(
+        """
+        DELETE FROM role_invitation_tokens
+        WHERE token_hash = %s
+        """,
+        (token_hash,),
+    )
+
+
 def build_initials(full_name: str) -> str:
     parts = [part for part in re.split(r"\s+", (full_name or "").strip()) if part]
     if not parts:
@@ -1166,6 +1303,51 @@ def normalize_optional_text(value, max_length=None):
     if max_length is not None:
         return text[:max_length]
     return text
+
+
+def build_name_from_email(email: str) -> str:
+    local_part = (email or "").strip().split("@", 1)[0]
+    local_part = re.sub(r"[._-]+", " ", local_part)
+    local_part = re.sub(r"\s+", " ", local_part).strip()
+    if not local_part:
+        return "Invited User"
+    return local_part.title()
+
+
+def fetch_or_create_invited_user(cursor, email: str):
+    email = (email or "").strip().lower()
+    cursor.execute(
+        """
+        SELECT user_id, full_name, email, phone, role, password_hash, password_changed_at
+        FROM users
+        WHERE LOWER(email) = LOWER(%s)
+        LIMIT 1
+        """,
+        (email,),
+    )
+    user = cursor.fetchone()
+    if user:
+        user["email"] = (user.get("email") or email).strip().lower()
+        return user, False
+
+    now = current_datetime()
+    full_name = build_name_from_email(email)
+    cursor.execute(
+        """
+        INSERT INTO users (full_name, email, phone, password_hash, password_changed_at, role, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (full_name, email, None, None, now, ROLE_USER, now),
+    )
+    return {
+        "user_id": cursor.lastrowid,
+        "full_name": full_name,
+        "email": email,
+        "phone": None,
+        "role": ROLE_USER,
+        "password_hash": None,
+        "password_changed_at": now,
+    }, True
 
 
 def local_static_image_filename(image_path):
@@ -2223,6 +2405,28 @@ def create_password_reset_tokens_table(cursor):
             KEY idx_password_reset_tokens_expires_at (expires_at),
             FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
             FOREIGN KEY (requested_by) REFERENCES users(user_id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def create_role_invitation_tokens_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS role_invitation_tokens (
+            invitation_id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            invited_by INT NULL,
+            role VARCHAR(20) NOT NULL DEFAULT 'user',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL,
+            used_at DATETIME NULL,
+            UNIQUE KEY uq_role_invitation_tokens_token_hash (token_hash),
+            KEY idx_role_invitation_tokens_user_id (user_id),
+            KEY idx_role_invitation_tokens_expires_at (expires_at),
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+            FOREIGN KEY (invited_by) REFERENCES users(user_id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
@@ -2244,6 +2448,25 @@ def ensure_password_reset_tokens_table(cursor):
     )
     add_column_if_missing(cursor, "password_reset_tokens", "expires_at", "DATETIME NOT NULL AFTER created_at")
     add_column_if_missing(cursor, "password_reset_tokens", "used_at", "DATETIME NULL AFTER expires_at")
+
+
+def ensure_role_invitation_tokens_table(cursor):
+    if not table_exists(cursor, "role_invitation_tokens"):
+        create_role_invitation_tokens_table(cursor)
+        return
+
+    add_column_if_missing(cursor, "role_invitation_tokens", "user_id", "INT NOT NULL AFTER invitation_id")
+    add_column_if_missing(cursor, "role_invitation_tokens", "token_hash", "CHAR(64) NOT NULL AFTER user_id")
+    add_column_if_missing(cursor, "role_invitation_tokens", "invited_by", "INT NULL AFTER token_hash")
+    add_column_if_missing(cursor, "role_invitation_tokens", "role", "VARCHAR(20) NOT NULL DEFAULT 'user' AFTER invited_by")
+    add_column_if_missing(
+        cursor,
+        "role_invitation_tokens",
+        "created_at",
+        "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER role",
+    )
+    add_column_if_missing(cursor, "role_invitation_tokens", "expires_at", "DATETIME NOT NULL AFTER created_at")
+    add_column_if_missing(cursor, "role_invitation_tokens", "used_at", "DATETIME NULL AFTER expires_at")
 
 
 def seed_default_newsletter_subscribers(cursor):
@@ -2450,6 +2673,7 @@ def initialize_database():
         ensure_reviews_table(cursor)
         ensure_newsletter_subscribers_table(cursor)
         ensure_password_reset_tokens_table(cursor)
+        ensure_role_invitation_tokens_table(cursor)
 
         cursor.execute(
             """
@@ -7352,11 +7576,219 @@ def admin_users():
         tuple(params),
     )
     users_rows = cursor.fetchall()
+    pending_invitations = fetch_pending_role_invitations(cursor)
+    for invitation in pending_invitations:
+        expires_at = invitation.get("expires_at")
+        invitation["is_expired"] = bool(expires_at and expires_at <= current_datetime())
+        invitation["status_label"] = "Expired" if invitation["is_expired"] else "Pending"
 
     cursor.close()
     conn.close()
 
-    return render_template("admin/users.html", users=users_rows, q=q)
+    return render_template(
+        "admin/users.html",
+        users=users_rows,
+        pending_invitations=pending_invitations,
+        q=q,
+        role_options=[(ROLE_USER, "User"), (ROLE_ADMIN, "Admin")],
+    )
+
+
+@admin_required
+def admin_send_user_role_invite_email():
+    next_url = get_safe_next_url() or url_for("admin_users")
+    email = request.form.get("invite_email", "").strip().lower()
+    role = normalize_user_role(request.form.get("invite_role", ROLE_USER))
+
+    if not email:
+        flash("Please enter an email address.", "error")
+        return redirect(next_url)
+
+    if not is_valid_email(email):
+        flash("Please enter a valid email address.", "error")
+        return redirect(next_url)
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    created_new_user = False
+    token_hash = None
+
+    try:
+        user, created_new_user = fetch_or_create_invited_user(cursor, email)
+        raw_token, expires_at, token_hash = create_role_invitation_request(
+            cursor,
+            user_id=user["user_id"],
+            role=role,
+            invited_by=g.current_user["user_id"],
+        )
+        conn.commit()
+
+        invite_url = build_public_url("accept_role_invitation", token=raw_token)
+        subject, body = build_access_invitation_email(user, invite_url, expires_at, role=role)
+        send_email_message(subject, body, email)
+
+        try:
+            invalidate_other_role_invitation_tokens(cursor, user["user_id"], token_hash)
+            conn.commit()
+        except mysql.connector.Error as err:
+            conn.rollback()
+            app.logger.warning(
+                "Role invite email sent to %s, but older invite tokens could not be invalidated: %s",
+                email,
+                err,
+            )
+
+        flash(
+            f"Invitation sent to {email} for {role.title()} access. The link expires at {expires_at.strftime('%B %d, %Y %H:%M')}.",
+            "success",
+        )
+        return redirect(next_url)
+    except (RuntimeError, smtplib.SMTPException, OSError) as err:
+        conn.rollback()
+        try:
+            if token_hash:
+                delete_role_invitation_token(cursor, token_hash)
+            if created_new_user:
+                cursor.execute("DELETE FROM users WHERE user_id = %s", (user["user_id"],))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        flash(f"Unable to send the invitation email: {err}", "error")
+        return redirect(next_url)
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+        return redirect(next_url)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@admin_required
+def admin_resend_user_role_invite_email(invitation_id):
+    next_url = get_safe_next_url() or url_for("admin_users")
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT t.invitation_id, t.user_id, t.role, t.used_at, t.expires_at,
+               u.full_name, u.email
+        FROM role_invitation_tokens t
+        JOIN users u ON u.user_id = t.user_id
+        WHERE t.invitation_id = %s
+        LIMIT 1
+        """,
+        (invitation_id,),
+    )
+    invitation = cursor.fetchone()
+
+    if not invitation:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if invitation.get("used_at"):
+        cursor.close()
+        conn.close()
+        flash("This invitation has already been redeemed or revoked.", "error")
+        return redirect(next_url)
+
+    token_hash = None
+    try:
+        raw_token, expires_at, token_hash = create_role_invitation_request(
+            cursor,
+            user_id=invitation["user_id"],
+            role=normalize_user_role(invitation.get("role")),
+            invited_by=g.current_user["user_id"],
+        )
+        conn.commit()
+
+        invite_url = build_public_url("accept_role_invitation", token=raw_token)
+        subject, body = build_access_invitation_email(invitation, invite_url, expires_at, role=invitation.get("role"))
+        send_email_message(subject, body, invitation["email"])
+
+        try:
+            invalidate_other_role_invitation_tokens(cursor, invitation["user_id"], token_hash)
+            conn.commit()
+        except mysql.connector.Error as err:
+            conn.rollback()
+            app.logger.warning(
+                "Role invite resent to %s, but older invite tokens could not be invalidated: %s",
+                invitation["email"],
+                err,
+            )
+
+        flash(
+            f"Invitation resent to {invitation['email']}. It now expires at {expires_at.strftime('%B %d, %Y %H:%M')}.",
+            "success",
+        )
+        return redirect(next_url)
+    except (RuntimeError, smtplib.SMTPException, OSError) as err:
+        conn.rollback()
+        try:
+            if token_hash:
+                delete_role_invitation_token(cursor, token_hash)
+                conn.commit()
+        except Exception:
+            conn.rollback()
+        flash(f"Unable to resend the invitation email: {err}", "error")
+        return redirect(next_url)
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+        return redirect(next_url)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@admin_required
+def admin_revoke_user_role_invite(invitation_id):
+    next_url = get_safe_next_url() or url_for("admin_users")
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        """
+        SELECT invitation_id, user_id, used_at
+        FROM role_invitation_tokens
+        WHERE invitation_id = %s
+        LIMIT 1
+        """,
+        (invitation_id,),
+    )
+    invitation = cursor.fetchone()
+
+    if not invitation:
+        cursor.close()
+        conn.close()
+        return render_template("404.html"), 404
+
+    if invitation.get("used_at"):
+        cursor.close()
+        conn.close()
+        flash("That invitation has already been redeemed or revoked.", "error")
+        return redirect(next_url)
+
+    try:
+        cursor.execute(
+            """
+            UPDATE role_invitation_tokens
+            SET used_at = %s
+            WHERE invitation_id = %s AND used_at IS NULL
+            """,
+            (current_datetime(), invitation_id),
+        )
+        conn.commit()
+        flash("Invitation revoked.", "success")
+        return redirect(next_url)
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+        return redirect(next_url)
+    finally:
+        cursor.close()
+        conn.close()
 
 
 @admin_required
@@ -8028,6 +8460,90 @@ def logout():
         session.clear()
         flash("You have been logged out.", "success")
     return redirect(url_for("home"))
+
+
+def accept_role_invitation(token):
+    token = (token or "").strip()
+    invalid_reason = "This invitation link is invalid or has expired."
+
+    if not token:
+        return render_template(
+            "invite_setup.html",
+            invite_request=None,
+            token="",
+            invalid_reason=invalid_reason,
+        ), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    invite_request = fetch_role_invitation_request(cursor, token)
+
+    if (
+        not invite_request
+        or invite_request.get("used_at")
+        or invite_request.get("expires_at") <= current_datetime()
+    ):
+        cursor.close()
+        conn.close()
+        return render_template(
+            "invite_setup.html",
+            invite_request=None,
+            token=token,
+            invalid_reason=invalid_reason,
+        ), 400
+
+    if request.method == "POST":
+        new_password = request.form.get("new_password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if len(new_password) < 8:
+            flash("Password must be at least 8 characters long.", "error")
+        elif new_password != confirm_password:
+            flash("Passwords do not match.", "error")
+        else:
+            try:
+                invited_role = normalize_user_role(invite_request.get("role"))
+                password_changed_at = current_datetime()
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET password_hash=%s, password_changed_at=%s, role=%s
+                    WHERE user_id=%s
+                    """,
+                    (
+                        generate_password_hash(new_password),
+                        password_changed_at,
+                        invited_role,
+                        invite_request["user_id"],
+                    ),
+                )
+                invalidate_password_reset_tokens(cursor, invite_request["user_id"])
+                invalidate_role_invitation_tokens(cursor, invite_request["user_id"])
+                conn.commit()
+
+                clear_auth_session()
+                session["user_id"] = invite_request["user_id"]
+                session["user_role"] = invited_role
+                session["user_name"] = invite_request["full_name"]
+                session[PASSWORD_VERSION_SESSION_KEY] = serialize_password_version(password_changed_at)
+                flash("Your access has been activated successfully.", "success")
+
+                cursor.close()
+                conn.close()
+                destination = url_for("admin_dashboard") if invited_role == ROLE_ADMIN else url_for("home")
+                return redirect(destination)
+            except mysql.connector.Error as err:
+                conn.rollback()
+                flash(f"Database error: {err}", "error")
+
+    cursor.close()
+    conn.close()
+    return render_template(
+        "invite_setup.html",
+        invite_request=invite_request,
+        token=token,
+        invalid_reason="",
+    )
 
 
 def reset_password(token):

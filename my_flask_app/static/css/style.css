@@ -206,6 +206,10 @@ a {
   background-color: #e74c3c;
 }
 
+.status-expired {
+  background-color: #64748b;
+}
+
 .admin-actions a {
   color: #3498db;
   text-decoration: none;
@@ -2784,6 +2788,10 @@ footer {
 
 .status-cancelled {
   background: var(--danger, #b42318);
+}
+
+.status-expired {
+  background: #64748b;
 }
 
 .status-approved {

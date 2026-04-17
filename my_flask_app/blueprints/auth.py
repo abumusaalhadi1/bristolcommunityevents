@@ -8,6 +8,7 @@ ROUTES = [
     ("/login", "login", {"methods": ["GET", "POST"]}),
     ("/register", "register", {"methods": ["GET", "POST"]}),
     ("/logout", "logout", {}),
+    ("/invite/<token>", "accept_role_invitation", {"methods": ["GET", "POST"]}),
     ("/reset-password/<token>", "reset_password", {"methods": ["GET", "POST"]}),
 ]
 

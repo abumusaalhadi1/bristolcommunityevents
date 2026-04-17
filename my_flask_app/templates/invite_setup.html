@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+
+{% block title %}Set Up Access | Bristol Community Events{% endblock %}
+
+{% block content %}
+<main class="container">
+    <div class="auth-container">
+        {% if invite_request %}
+            <h1>Set Up Access</h1>
+            <p class="auth-copy">
+                Complete your Bristol Community Events access for {{ invite_request.full_name }} ({{ invite_request.email }}).
+            </p>
+            <p class="auth-switch">
+                This invitation grants {{ invite_request.role|title }} access and is valid until {{ invite_request.expires_at.strftime('%B %d, %Y %H:%M') }}.
+            </p>
+
+            <form method="POST" action="{{ url_for('accept_role_invitation', token=token) }}">
+                <div class="form-group">
+                    <label for="new_password">New Password</label>
+                    <input type="password" id="new_password" name="new_password" minlength="8" autocomplete="new-password" required />
+                </div>
+
+                <div class="form-group">
+                    <label for="confirm_password">Confirm New Password</label>
+                    <input type="password" id="confirm_password" name="confirm_password" minlength="8" autocomplete="new-password" required />
+                </div>
+
+                <button type="submit" class="btn">Activate Access</button>
+            </form>
+        {% else %}
+            <h1>Invitation Unavailable</h1>
+            <p class="auth-copy">{{ invalid_reason or 'This invitation link is invalid or has expired.' }}</p>
+            <p class="auth-switch">
+                Please ask an administrator to send a new invitation.
+            </p>
+            <a class="btn" href="{{ url_for('login') }}">Back to Login</a>
+        {% endif %}
+    </div>
+</main>
+{% endblock %}

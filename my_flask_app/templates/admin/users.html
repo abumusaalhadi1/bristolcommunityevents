@@ -8,6 +8,93 @@
     <div style="opacity: .8;">Total: {{ users|length }}</div>
 </div>
 
+<section class="receipt-card" style="margin-bottom: 1rem;">
+    <div class="report-section-header">
+        <div>
+            <h2 style="margin: 0;">Role Management</h2>
+            <p class="report-section-note">Invite a person by email, choose a role, and they will receive a secure setup link.</p>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('admin_send_user_role_invite_email') }}" class="admin-filters" style="margin-top: 1rem;">
+        <input type="hidden" name="next" value="{{ url_for('admin_users', q=q) if q else url_for('admin_users') }}" />
+        <div class="form-group" style="min-width: 220px; flex: 1 1 220px;">
+            <label for="invite_email">Email</label>
+            <input type="email" id="invite_email" name="invite_email" placeholder="name@example.com" required />
+        </div>
+
+        <div class="form-group" style="min-width: 180px; flex: 0 0 180px;">
+            <label for="invite_role">Role</label>
+            <select id="invite_role" name="invite_role">
+                {% for value, label in role_options %}
+                    <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="display:flex; gap:.5rem; align-items:flex-end; flex-wrap: wrap;">
+            <button type="submit" class="btn" style="width: auto;">Send Invite</button>
+        </div>
+    </form>
+</section>
+
+<section class="receipt-card" style="margin-bottom: 1rem;">
+    <div class="report-section-header">
+        <div>
+            <h2 style="margin: 0;">Pending Invites</h2>
+            <p class="report-section-note">Track invitations that have not been redeemed yet. Expired links can be resent from here.</p>
+        </div>
+    </div>
+
+    <div class="admin-table-wrap" style="margin-top: 1rem;">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Sent</th>
+                    <th>Expires</th>
+                    <th>Sent By</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for invite in pending_invitations %}
+                <tr>
+                    <td>{{ invite.email }}</td>
+                    <td><span class="status-badge status-{{ invite.role|lower }}">{{ invite.role|title }}</span></td>
+                    <td>
+                        {% if invite.is_expired %}
+                            <span class="status-badge status-expired">Expired</span>
+                        {% else %}
+                            <span class="status-badge status-pending">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ invite.created_at.strftime('%B %d, %Y %H:%M') if invite.created_at else '-' }}</td>
+                    <td>{{ invite.expires_at.strftime('%B %d, %Y %H:%M') if invite.expires_at else '-' }}</td>
+                    <td>{{ invite.invited_by_name or invite.invited_by_email or '-' }}</td>
+                    <td class="admin-actions">
+                        <form method="POST" action="{{ url_for('admin_resend_user_role_invite_email', invitation_id=invite.invitation_id) }}" style="display:inline;" onsubmit="return confirm('Resend this invitation email?');">
+                            <input type="hidden" name="next" value="{{ url_for('admin_users', q=q) if q else url_for('admin_users') }}" />
+                            <button type="submit" class="admin-link" style="border: none; background: transparent; padding: 0; font: inherit; cursor: pointer;">Resend</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin_revoke_user_role_invite', invitation_id=invite.invitation_id) }}" style="display:inline;" onsubmit="return confirm('Revoke this invitation?');">
+                            <input type="hidden" name="next" value="{{ url_for('admin_users', q=q) if q else url_for('admin_users') }}" />
+                            <button type="submit" class="admin-link" style="border: none; background: transparent; padding: 0; font: inherit; cursor: pointer;">Revoke</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7">No pending invitations.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
 <form method="GET" action="{{ url_for('admin_users') }}" class="admin-filters">
     <div class="form-group" style="min-width: 180px; flex: 1 1 180px;">
         <label>Search</label>
