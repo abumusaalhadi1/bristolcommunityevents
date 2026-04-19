@@ -1901,6 +1901,7 @@ def seed_default_events(cursor):
         event_name = (seed.get("event_name") or "").strip()
         event_date = parse_event_date(seed.get("event_date"))
         event_end_date = parse_event_date(seed.get("event_end_date")) or event_date
+        event_time = (seed.get("event_time") or "").strip()
         venue_id = lookup_venue_id_by_name(cursor, seed.get("venue_name"))
         category_id = lookup_category_id_by_name(cursor, seed.get("category_name"))
 
@@ -1912,13 +1913,15 @@ def seed_default_events(cursor):
             cursor.execute(
                 """
                 UPDATE events
-                SET event_capacity=%s
+                SET event_capacity=%s,
+                    event_time=%s
                 WHERE event_name=%s
                   AND event_date=%s
                   AND venue_id=%s
                 """,
                 (
                     int(seed.get("event_capacity") or 0),
+                    event_time or None,
                     event_name,
                     event_date,
                     venue_id,
@@ -1929,10 +1932,10 @@ def seed_default_events(cursor):
         cursor.execute(
             """
             INSERT INTO events (
-                event_name, description, location, event_date, event_end_date, price,
+                event_name, description, location, event_date, event_end_date, event_time, price,
                 event_cost, venue_id, category_id, event_capacity, image_url
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 event_name[:255],
@@ -1940,6 +1943,7 @@ def seed_default_events(cursor):
                 (seed.get("location") or "").strip()[:255],
                 event_date,
                 event_end_date,
+                event_time or None,
                 to_money(seed.get("price")),
                 event_cost_from_price(seed.get("price")),
                 venue_id,
@@ -2590,7 +2594,8 @@ def initialize_database():
         add_column_if_missing(cursor, "events", "description", "TEXT NULL AFTER event_name")
         add_column_if_missing(cursor, "events", "location", "VARCHAR(255) NULL AFTER description")
         add_column_if_missing(cursor, "events", "event_end_date", "DATE NULL AFTER event_date")
-        add_column_if_missing(cursor, "events", "conditions", "TEXT NULL AFTER event_end_date")
+        add_column_if_missing(cursor, "events", "event_time", "VARCHAR(50) NULL AFTER event_end_date")
+        add_column_if_missing(cursor, "events", "conditions", "TEXT NULL AFTER event_time")
         add_column_if_missing(
             cursor,
             "events",
@@ -4345,6 +4350,7 @@ def add_event():
         location = request.form.get("location", "").strip()
         event_date = parse_event_date(request.form.get("event_date"))
         event_end_date = parse_event_date(request.form.get("event_end_date"))
+        event_time = request.form.get("event_time", "").strip()
         conditions = request.form.get("conditions", "").strip()
         price = parse_price(request.form.get("price"))
         event_cost = parse_price(request.form.get("event_cost"))
@@ -4367,6 +4373,7 @@ def add_event():
             "location": location,
             "event_date": event_date,
             "event_end_date": event_end_date or event_date,
+            "event_time": event_time,
             "conditions": conditions,
             "price": price,
             "event_cost": event_cost,
@@ -4424,15 +4431,16 @@ def add_event():
                         cursor.execute(
                             """
                             INSERT INTO events (
-                                event_name, event_date, event_end_date, location, conditions, price,
+                                event_name, event_date, event_end_date, event_time, location, conditions, price,
                                 event_cost, venue_id, category_id, event_capacity, image_url
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 event_name,
                                 event_date,
                                 event_end_date or event_date,
+                                event_time or None,
                                 location,
                                 conditions or None,
                                 price,
@@ -4498,6 +4506,7 @@ def update_event(event_id):
         venue_id_raw = request.form.get("venue_id")
         category_id_raw = request.form.get("category_id")
         event_end_date = parse_event_date(request.form.get("event_end_date"))
+        event_time = request.form.get("event_time", "").strip()
         conditions = request.form.get("conditions", "").strip()
         event_cost = parse_price(request.form.get("event_cost"))
         image_file = request.files.get("image_file")
@@ -4565,7 +4574,7 @@ def update_event(event_id):
                             """
                             UPDATE events
                             SET event_name=%s, event_date=%s, event_end_date=%s, location=%s, conditions=%s,
-                                price=%s, event_cost=%s, venue_id=%s, category_id=%s, event_capacity=%s, image_url=%s
+                                event_time=%s, price=%s, event_cost=%s, venue_id=%s, category_id=%s, event_capacity=%s, image_url=%s
                             WHERE event_id=%s
                             """,
                             (
@@ -4574,6 +4583,7 @@ def update_event(event_id):
                                 event_end_date or event_date,
                                 location,
                                 conditions or None,
+                                event_time or None,
                                 price,
                                 event_cost,
                                 venue_id,

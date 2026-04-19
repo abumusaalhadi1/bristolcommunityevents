@@ -22,6 +22,7 @@ CREATE TABLE events (
   event_name VARCHAR(255) NOT NULL,
   description TEXT,
   event_date DATE,
+  event_time VARCHAR(50),
   price DECIMAL(10,2),
   event_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   venue_id INT,

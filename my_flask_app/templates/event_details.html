@@ -36,6 +36,9 @@
                         <strong>Duration:</strong> {{ event.event_duration_days }} day{{ 's' if event.event_duration_days != 1 else '' }}
                     </div>
                     <div class="event-detail">
+                        <strong>Event time:</strong> {{ event.event_time or 'TBD' }}
+                    </div>
+                    <div class="event-detail">
                         <strong>Venue:</strong> {{ event.venue_name or 'TBD' }}
                     </div>
                     <div class="event-detail">
