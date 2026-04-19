@@ -1044,6 +1044,13 @@ nav ul li a:hover {
   border-left-color: #ef4444;
 }
 
+.flash.info {
+  background: linear-gradient(135deg, rgba(235, 244, 255, 0.96), rgba(255, 255, 255, 0.96));
+  color: #1e40af;
+  border-color: rgba(59, 130, 246, 0.18);
+  border-left-color: #3b82f6;
+}
+
 .flash::before {
   content: "";
   width: 0.8rem;

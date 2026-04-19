@@ -1,5 +1,4 @@
-"""Flask application for Bristol Community Events.
-"""
+"""Flask application for Bristol Community Events."""
 
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -3372,6 +3371,25 @@ def promote_waitlist_entries(cursor, conn, event_id: int):
             break
 
     return offered
+
+
+def trigger_waitlist_offers(cursor, conn):
+    cursor.execute(
+        """
+        SELECT DISTINCT event_id
+        FROM event_waitlist
+        WHERE status=%s
+        ORDER BY event_id ASC
+        """,
+        (WAITLIST_STATUS_WAITING,),
+    )
+    event_ids = [row["event_id"] for row in cursor.fetchall()]
+
+    offered_waitlist_ids = []
+    for event_id in event_ids:
+        offered_waitlist_ids.extend(promote_waitlist_entries(cursor, conn, event_id))
+
+    return offered_waitlist_ids
 
 
 def event_price_reduction_summary(cursor, event_id: int):
@@ -6805,6 +6823,30 @@ def admin_waitlist():
         waitlist_entries=waitlist_entries,
         queue_summary=queue_summary,
     )
+
+
+@admin_required
+def admin_trigger_waitlist_offers():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        offered_waitlist_ids = trigger_waitlist_offers(cursor, conn)
+        conn.commit()
+        if offered_waitlist_ids:
+            flash(
+                f"Triggered waitlist offers for {len(offered_waitlist_ids)} request(s).",
+                "success",
+            )
+        else:
+            flash("No waiting requests could be offered right now.", "info")
+    except mysql.connector.Error as err:
+        conn.rollback()
+        flash(f"Database error: {err}", "error")
+    finally:
+        cursor.close()
+        conn.close()
+
+    return redirect(url_for("admin_waitlist"))
 
 
 @admin_required

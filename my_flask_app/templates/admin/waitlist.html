@@ -10,6 +10,11 @@
         <p style="margin-top: .55rem; max-width: 62ch;">
             Review active waitlist requests and live offers across the platform.
         </p>
+        <form method="POST" action="{{ url_for('admin_trigger_waitlist_offers') }}" style="margin-top: 1rem;">
+            <button type="submit" class="btn" style="width: auto;" onclick="return confirm('Trigger waitlist offers for all events with open seats?');">
+                Trigger waitlist offers
+            </button>
+        </form>
     </div>
 
     <div class="report-hero-grid">
@@ -32,7 +37,7 @@
     <div class="report-panel-header">
         <div>
             <h2 style="margin: 0;">Waitlist Queue</h2>
-            <p class="report-panel-note">Active waiting requests and live offers across the system.</p>
+            <p class="report-panel-note">Active waiting requests and live offers across the system. Use the button above to re-run waitlist offers after seats open up.</p>
         </div>
     </div>
 
