@@ -15,7 +15,20 @@
 
                 {% if event %}
                     {% if event_is_sold_out %}
-                        <div class="flash error">This event is sold out.</div>
+                        <div class="booking-current-event">
+                            <div class="soldout-action-row" style="margin: 0 0 .5rem;">
+                                <strong>{{ event.event_name }}</strong>
+                                <span class="status-badge status-soldout">Sold Out</span>
+                            </div>
+                            <p>
+                                {{ event.event_date_label }}
+                                {% if event.venue_name %} | {{ event.venue_name }}{% endif %}
+                                {% if event.category_name %} | {{ event.category_name }}{% endif %}
+                            </p>
+                            <p>Remaining seats: {{ event.remaining_label }}</p>
+                            <span class="btn btn-soft btn-disabled soldout-cta" style="width: auto; margin-top: .5rem;" aria-disabled="true">Book Now</span>
+                        </div>
+                        <div class="flash error" style="margin-top: 1rem;">This event is sold out.</div>
                     {% else %}
                         <div class="booking-current-event">
                             <strong>{{ event.event_name }}</strong>

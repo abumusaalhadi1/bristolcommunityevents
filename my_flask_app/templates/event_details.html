@@ -71,7 +71,16 @@
                     {% endif %}
                 </p>
                 {% if event.is_sold_out %}
+                    <div class="soldout-action-row">
+                        <span class="btn btn-soft btn-disabled soldout-cta" style="width: auto;" aria-disabled="true">Book Now</span>
+                        <span class="status-badge status-soldout">Sold Out</span>
+                    </div>
                     {% if is_authenticated %}
+                        <div class="booking-current-event" style="margin-top: 1rem;">
+                            <strong>Join the waitlist</strong>
+                            <p>This event is fully booked. Add your details and we'll offer the place to the top person on the list when a seat opens up.</p>
+                            <p>Waitlist requests are timestamped and handled in the order they were received.</p>
+                        </div>
                         <form method="POST" action="{{ url_for('join_waitlist', event_id=event.event_id) }}" style="display:grid; gap:.75rem; max-width: 420px; margin-top: 1rem;">
                             <div class="form-group">
                                 <label for="waitlistTickets">Number of Tickets</label>
@@ -100,6 +109,10 @@
                             <p style="margin: 0; color: #52606d; font-size: .95rem;">Waitlist requests are timestamped so the earliest request is handled first.</p>
                         </form>
                     {% else %}
+                        <div class="booking-current-event" style="margin-top: 1rem;">
+                            <strong>Join the waitlist</strong>
+                            <p>This event is fully booked. Log in to join the waitlist and keep your place in line for an opening.</p>
+                        </div>
                         <a href="{{ url_for('login', next=url_for('event_detail', event_id=event.event_id)) }}" class="btn" style="width: auto;">Login to Join Waitlist</a>
                     {% endif %}
                 {% elif event.is_bookable %}

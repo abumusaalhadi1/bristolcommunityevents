@@ -201,7 +201,7 @@ DEFAULT_EVENTS = [
         "price": "18.00",
         "venue_name": "Creative Space A",
         "category_name": "Workshops",
-        "event_capacity": 300,
+        "event_capacity": 10,
         "image_url": "/static/images/event/event-card-3.jpg",
     },
     {

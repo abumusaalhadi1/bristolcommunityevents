@@ -10,6 +10,7 @@
         <a class="btn" href="{{ url_for('admin_users') }}" style="width: auto;">View Users</a>
         <a class="btn" href="{{ url_for('admin_contact_messages') }}" style="width: auto;">View Messages</a>
         <a class="btn" href="{{ url_for('admin_venues') }}" style="width: auto;">View Venues</a>
+        <a class="btn" href="{{ url_for('admin_featured_events') }}" style="width: auto; background: #2c3e50;">Featured Events</a>
         <a class="btn" href="{{ url_for('admin_reviews') }}" style="width: auto;">View Reviews</a>
         <a class="btn" href="{{ url_for('admin_reports') }}" style="width: auto; background: #2c3e50;">View Reports</a>
     </div>
@@ -41,6 +42,13 @@
         <div class="label">Reviews</div>
         <div class="value">{{ reviews_count }}</div>
         <div style="margin-top: .3rem; color: #5d6b7b; font-weight: 600;">{{ pending_reviews_count }} pending</div>
+    </div>
+    <div class="admin-card">
+        <div class="label">Featured Events</div>
+        <div class="value">{{ featured_events_count }}</div>
+        <div style="margin-top: .3rem; color: #5d6b7b; font-weight: 600;">
+            <a class="admin-link" href="{{ url_for('admin_featured_events') }}">Manage homepage picks</a>
+        </div>
     </div>
     <div class="admin-card">
         <div class="label">Tickets Sold</div>

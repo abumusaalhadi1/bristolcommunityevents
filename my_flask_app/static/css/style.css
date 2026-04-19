@@ -87,6 +87,28 @@ a {
   box-shadow: none;
 }
 
+.soldout-action-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 1rem 0;
+  flex-wrap: wrap;
+}
+
+.soldout-cta {
+  background-color: #eef4f9;
+  color: #64748b;
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  opacity: 0.72;
+}
+
+.soldout-cta:hover {
+  background-color: #eef4f9;
+  color: #64748b;
+  opacity: 0.72;
+}
+
  /* ORIGINAL ADMIN STYLES - FIXED */
 .admin-panel {
   background-color: #f8f9fa;
@@ -2799,6 +2821,10 @@ footer {
 
 .status-expired {
   background: #64748b;
+}
+
+.status-soldout {
+  background: #7c3aed;
 }
 
 .status-approved {

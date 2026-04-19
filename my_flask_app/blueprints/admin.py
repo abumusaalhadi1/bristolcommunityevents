@@ -15,6 +15,7 @@ ROUTES = [
     ("/admin/subscribers", "admin_subscribers", {}),
     ("/admin/waitlist", "admin_waitlist", {}),
     ("/admin/waitlist/trigger-offers", "admin_trigger_waitlist_offers", {"methods": ["POST"]}),
+    ("/admin/featured-events", "admin_featured_events", {"methods": ["GET", "POST"]}),
     ("/admin/reports", "admin_reports", {}),
     ("/admin/users/invite", "admin_send_user_role_invite_email", {"methods": ["POST"]}),
     ("/admin/users/invite/<int:invitation_id>/resend", "admin_resend_user_role_invite_email", {"methods": ["POST"]}),

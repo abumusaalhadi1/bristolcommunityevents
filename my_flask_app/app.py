@@ -87,6 +87,8 @@ EVENT_COST_MARGIN = Decimal("0.15")
 REFUND_WINDOW_HOURS = 72
 REFUND_PROCESSING_WORKING_DAYS = 2
 ACTIVE_BOOKING_CONDITION = "COALESCE(status, 'Confirmed') <> 'Cancelled'"
+FEATURED_EVENTS_LIMIT = 3
+FEATURED_EVENTS_ADMIN_LIMIT = 6
 
 WAITLIST_STATUS_WAITING = "Waiting"
 WAITLIST_STATUS_OFFERED = "Offered"
@@ -1907,6 +1909,21 @@ def seed_default_events(cursor):
 
         key = (event_name.lower(), event_date, venue_id)
         if key in existing_events:
+            cursor.execute(
+                """
+                UPDATE events
+                SET event_capacity=%s
+                WHERE event_name=%s
+                  AND event_date=%s
+                  AND venue_id=%s
+                """,
+                (
+                    int(seed.get("event_capacity") or 0),
+                    event_name,
+                    event_date,
+                    venue_id,
+                ),
+            )
             continue
 
         cursor.execute(
@@ -1932,6 +1949,21 @@ def seed_default_events(cursor):
             ),
         )
         existing_events.add(key)
+
+
+def ensure_event_feature_columns(cursor):
+    add_column_if_missing(
+        cursor,
+        "events",
+        "is_featured",
+        "TINYINT(1) NOT NULL DEFAULT 0 AFTER image_url",
+    )
+    add_column_if_missing(
+        cursor,
+        "events",
+        "featured_order",
+        "INT NULL AFTER is_featured",
+    )
 
 
 def ensure_venues_table(cursor):
@@ -2571,6 +2603,7 @@ def initialize_database():
             "image_url",
             "VARCHAR(255) NULL AFTER event_cost",
         )
+        ensure_event_feature_columns(cursor)
         add_column_if_missing(cursor, "users", "password_hash", "VARCHAR(255) NULL AFTER email")
         add_column_if_missing(
             cursor,
@@ -4181,6 +4214,90 @@ def admin_events():
 
 
 @admin_required
+def admin_featured_events():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    if request.method == "POST":
+        cursor.execute("SELECT event_id, featured_order FROM events")
+        current_featured_orders = {row["event_id"]: row["featured_order"] for row in cursor.fetchall()}
+
+        selected_featured_events = []
+        seen_event_ids = set()
+        for position, raw_event_id in enumerate(request.form.getlist("featured_event_ids"), start=1):
+            event_id = parse_positive_int(raw_event_id, None)
+            if event_id is None or event_id in seen_event_ids:
+                continue
+            seen_event_ids.add(event_id)
+
+            order_value = parse_positive_int(request.form.get(f"featured_order_{event_id}"), None)
+            if order_value is None or not 1 <= order_value <= FEATURED_EVENTS_ADMIN_LIMIT:
+                existing_order = current_featured_orders.get(event_id)
+                if isinstance(existing_order, int) and 1 <= existing_order <= FEATURED_EVENTS_ADMIN_LIMIT:
+                    order_value = existing_order
+                else:
+                    order_value = position
+            selected_featured_events.append((event_id, order_value))
+
+        cursor.execute("SELECT event_id FROM events")
+        valid_event_ids = {row["event_id"] for row in cursor.fetchall()}
+        selected_featured_events = [item for item in selected_featured_events if item[0] in valid_event_ids][:FEATURED_EVENTS_ADMIN_LIMIT]
+
+        try:
+            cursor.execute(
+                """
+                UPDATE events
+                SET is_featured = 0,
+                    featured_order = NULL
+                """
+            )
+            for event_id, order_value in selected_featured_events:
+                cursor.execute(
+                    """
+                    UPDATE events
+                    SET is_featured = 1,
+                        featured_order = %s
+                    WHERE event_id = %s
+                    """,
+                    (order_value, event_id),
+                )
+            conn.commit()
+            flash("Featured events updated successfully.", "success")
+            return redirect(url_for("admin_featured_events"))
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f"Database error: {err}", "error")
+
+    cursor.execute(
+        f"""
+        SELECT e.event_id, e.event_name, e.event_date, e.event_end_date, e.location, e.price,
+               e.event_capacity, e.is_featured, e.featured_order,
+               v.venue_name, c.category_name,
+               COALESCE(bt.booked_tickets, 0) AS booked_tickets,
+               CASE
+                    WHEN e.event_capacity IS NULL THEN NULL
+                    ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
+               END AS remaining_seats
+        FROM events e
+        LEFT JOIN venues v ON e.venue_id = v.venue_id
+        LEFT JOIN categories c ON e.category_id = c.category_id
+        {booking_totals_join()}
+        WHERE e.event_date >= CURDATE() OR COALESCE(e.is_featured, 0) = 1
+        ORDER BY COALESCE(e.is_featured, 0) DESC, COALESCE(e.featured_order, 999) ASC, e.event_date ASC, e.event_id ASC
+        """
+    )
+    featured_events = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return render_template(
+        "admin/featured_events.html",
+        featured_events=featured_events,
+    )
+
+
+@admin_required
 def reduce_event_price(event_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -4591,15 +4708,15 @@ def home():
                COALESCE(bt.booked_tickets, 0) AS booked_tickets,
                CASE
                     WHEN e.event_capacity IS NULL THEN NULL
-                    ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
+                   ELSE GREATEST(e.event_capacity - COALESCE(bt.booked_tickets, 0), 0)
                END AS remaining_seats
         FROM events e
         LEFT JOIN venues v ON e.venue_id = v.venue_id
         LEFT JOIN categories c ON e.category_id = c.category_id
         {booking_totals_join()}
         WHERE e.event_date >= CURDATE()
-        ORDER BY e.event_date
-        LIMIT 3
+        ORDER BY COALESCE(e.is_featured, 0) DESC, COALESCE(e.featured_order, 999) ASC, e.event_date ASC, e.event_id ASC
+        LIMIT {FEATURED_EVENTS_LIMIT}
         """
     )
     featured_events = cursor.fetchall()
@@ -5897,6 +6014,15 @@ def admin_dashboard():
     cursor.execute("SELECT COUNT(*) AS count FROM users")
     users_count = cursor.fetchone()["count"]
 
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM events
+        WHERE COALESCE(is_featured, 0) = 1
+        """
+    )
+    featured_events_count = cursor.fetchone()["count"]
+
     cursor.execute("SELECT COUNT(*) AS count FROM bookings")
     bookings_count = cursor.fetchone()["count"]
 
@@ -5955,6 +6081,7 @@ def admin_dashboard():
         events_count=events_count,
         venues_count=venues_count,
         users_count=users_count,
+        featured_events_count=featured_events_count,
         bookings_count=bookings_count,
         tickets_total=tickets_total,
         revenue_total=revenue_total,

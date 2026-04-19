@@ -1,0 +1,90 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %}Featured Events | Admin{% endblock %}
+
+{% block admin_content %}
+<div class="admin-header">
+    <div>
+        <h1 style="margin: 0;">Featured Events</h1>
+        <p class="admin-subtitle" style="margin: .25rem 0 0;">Choose up to 6 events and set their display order on the home page.</p>
+    </div>
+    <a class="btn btn-soft" href="{{ url_for('admin_dashboard') }}" style="width: auto;">Back to Dashboard</a>
+</div>
+
+<div class="admin-card" style="margin-bottom: 1rem;">
+    <div class="label">How it works</div>
+    <div style="margin-top: .35rem; color: #5d6b7b;">
+        Featured events appear first on the home page. The home page shows up to 3 featured events.
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('admin_featured_events') }}">
+    <div class="admin-table-wrap">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th>Order</th>
+                    <th>Event</th>
+                    <th>Date</th>
+                    <th>Venue</th>
+                    <th>Remaining</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in featured_events %}
+                <tr>
+                    <td>
+                        <label style="display:inline-flex; align-items:center; gap:.45rem; cursor:pointer;">
+                            <input type="checkbox" name="featured_event_ids" value="{{ event.event_id }}" {% if event.is_featured %}checked{% endif %} />
+                            <span>Show on home</span>
+                        </label>
+                    </td>
+                    <td>
+                        <input
+                            type="number"
+                            name="featured_order_{{ event.event_id }}"
+                            value="{{ event.featured_order if event.featured_order is not none else '' }}"
+                            min="1"
+                            max="6"
+                            placeholder="-"
+                            style="width: 4.25rem; text-align: center; background: #fff; border: 1px solid #d7e0ea; color: #334155; border-radius: 10px; padding: .45rem .5rem;"
+                        />
+                    </td>
+                    <td>
+                        <div style="font-weight: 800;">{{ event.event_name }}</div>
+                        <div style="opacity: .8; font-size: .95rem;">{{ event.location or '-' }}</div>
+                    </td>
+                    <td>
+                        {% if event.event_end_date and event.event_end_date != event.event_date %}
+                            {{ event.event_date.strftime('%B %d, %Y') if event.event_date else '-' }} - {{ event.event_end_date.strftime('%B %d, %Y') if event.event_end_date else '-' }}
+                        {% else %}
+                            {{ event.event_date.strftime('%B %d, %Y') if event.event_date else '-' }}
+                        {% endif %}
+                    </td>
+                    <td>{{ event.venue_name or '-' }}</td>
+                    <td>{{ event.remaining_seats if event.remaining_seats is not none else '-' }}</td>
+                    <td>
+                        {% if event.is_featured %}
+                            <span class="status-badge status-approved">Featured</span>
+                        {% else %}
+                            <span class="status-badge status-expired">Hidden</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8">No upcoming events available to feature.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center; margin-top: 1rem; flex-wrap: wrap;">
+        <p style="margin: 0; color: #5d6b7b;">Tick up to 6 events and edit the order numbers before saving. The home page still shows only 3 featured events.</p>
+        <button type="submit" class="btn" style="width: auto;">Save Featured Events</button>
+    </div>
+</form>
+{% endblock %}

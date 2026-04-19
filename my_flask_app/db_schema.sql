@@ -28,6 +28,8 @@ CREATE TABLE events (
   category_id INT,
   event_capacity INT,
   image_url VARCHAR(255),
+  is_featured TINYINT(1) NOT NULL DEFAULT 0,
+  featured_order INT NULL,
   FOREIGN KEY (venue_id) REFERENCES venues(venue_id) ON DELETE SET NULL,
   FOREIGN KEY (category_id) REFERENCES categories(category_id)
 );
