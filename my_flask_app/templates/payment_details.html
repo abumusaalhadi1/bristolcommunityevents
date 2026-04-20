@@ -61,12 +61,12 @@
                     <h3>PayPal Details</h3>
                     <div class="form-group">
                         <label for="paypal_email">Email Address</label>
-                        <input type="email" id="paypal_email" name="paypal_email" value="{{ form_values.get('paypal_email', '') }}" autocomplete="email" {% if payment_method == 'paypal' %}required{% endif %} />
+                        <input type="email" id="paypal_email" name="paypal_email" value="{{ form_values.get('paypal_email', current_user.email if is_authenticated and current_user.email else '') }}" autocomplete="email" {% if payment_method == 'paypal' %}required{% endif %} />
                         {% if field_errors.paypal_email %}<small class="field-error">{{ field_errors.paypal_email }}</small>{% endif %}
                     </div>
                     <div class="form-group">
                         <label for="paypal_password">Password</label>
-                        <input type="password" id="paypal_password" name="paypal_password" autocomplete="current-password" {% if payment_method == 'paypal' %}required{% endif %} />
+                        <input type="password" id="paypal_password" name="paypal_password" value="" autocomplete="new-password" {% if payment_method == 'paypal' %}required{% endif %} />
                         <small>No real authentication is performed.</small>
                         {% if field_errors.paypal_password %}<small class="field-error">{{ field_errors.paypal_password }}</small>{% endif %}
                     </div>

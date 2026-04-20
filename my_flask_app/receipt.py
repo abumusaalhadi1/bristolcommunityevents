@@ -97,9 +97,9 @@ def pdf_add_line(ops, x1, y1, x2, y2, *, width=0.8, gray=0.82):
     ops.append(f"{x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
 
 
-def pdf_add_paragraph(ops, x, y, text, *, size=11, leading=14, max_chars=84, bold=False):
+def pdf_add_paragraph(ops, x, y, text, *, size=11, leading=14, max_chars=84, bold=False, color=(0, 0, 0)):
     for line in pdf_wrap_text(text, max_chars):
-        pdf_add_text(ops, x, y, line, size=size, bold=bold)
+        pdf_add_text(ops, x, y, line, size=size, bold=bold, color=color)
         y -= leading
     return y
 

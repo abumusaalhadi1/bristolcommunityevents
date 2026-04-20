@@ -40,7 +40,13 @@
                 <p><strong>Total Paid:</strong> &pound;{{ "%.2f"|format(booking.amount or 0) }}</p>
                 <p><strong>Payment Method:</strong> {{ (booking.payment_method or 'card')|title }}</p>
                 {% if booking.payment_source %}
-                <p><strong>Payment Source:</strong> {{ booking.payment_source }}</p>
+                <p><strong>Payment Source:</strong>
+                    {% if booking.payment_method == 'paypal' %}
+                        {{ booking.payment_source|replace('PayPal account ', 'PayPal account -', 1) }}
+                    {% else %}
+                        {{ booking.payment_source }}
+                    {% endif %}
+                </p>
                 {% endif %}
                 {% if booking.is_student %}
                 <p class="student-discount-disclaimer"><strong>Student ID Disclaimer:</strong> {{ student_id_disclaimer }}</p>
