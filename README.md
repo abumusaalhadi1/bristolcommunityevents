@@ -7,12 +7,34 @@ A Flask and MySQL web app for browsing Bristol events, booking tickets, joining 
 - `my_flask_app/dbfunc.py` - database connection helper
 - `my_flask_app/config.py` - environment-based configuration
 - `my_flask_app/receipt.py` - booking receipt PDF helpers
-- `my_flask_app/seed_data.py` - sample venues and reviews
+- `my_flask_app/seed_data.py` - sample categories, events, venues, and reviews
 - `my_flask_app/blueprints/` - route registration grouped by feature area
 - `my_flask_app/templates/` - Jinja templates
 - `my_flask_app/static/css/style.css` - site styling
 - `my_flask_app/static/js/app.js` - client-side booking logic
 - `my_flask_app/db_schema.sql` - schema for a fresh database
+
+## Project Structure
+```text
+Bristol Community Events - Flask/
+|-- .gitignore
+|-- README.md
+|-- README.txt
+|-- run_app.bat
+`-- my_flask_app/
+    |-- app.py
+    |-- config.py
+    |-- dbfunc.py
+    |-- receipt.py
+    |-- seed_data.py
+    |-- db_schema.sql
+    |-- blueprints/
+    |-- static/
+    |   |-- css/
+    |   |-- js/
+    |   `-- images/
+    `-- templates/
+```
 
 ## Features
 - Home page with featured events, stats, and reviews

@@ -119,18 +119,23 @@ Technical Features
 
 Project Structure
 -----------------
-my_flask_app/
-- app.py - Main Flask application (routes and logic)
-- dbfunc.py - Database connection helper
-- config.py - Configuration and environment variables
-- receipt.py - PDF receipt generation
-- seed_data.py - Sample data for venues and reviews
-- db_schema.sql - Database schema
-- blueprints/ - Modular route organisation
-- templates/ - Jinja HTML templates
-- static/
-  - css/style.css - Styling
-  - js/app.js - Frontend interactivity
+Bristol Community Events - Flask/
+- .gitignore
+- README.md
+- README.txt
+- run_app.bat
+- my_flask_app/
+  - app.py - Main Flask application (routes and logic)
+  - dbfunc.py - Database connection helper
+  - config.py - Configuration and environment variables
+  - receipt.py - PDF receipt generation
+  - seed_data.py - Sample data for categories, events, venues, and reviews
+  - db_schema.sql - Database schema
+  - blueprints/ - Modular route organisation
+  - templates/ - Jinja HTML templates
+  - static/
+    - css/style.css - Styling
+    - js/app.js - Frontend interactivity
 
 Setup Instructions
 ------------------
@@ -160,7 +165,7 @@ Setup Instructions
 
 Notes
 -----
-- The application automatically seeds sample data (venues and reviews) if tables are empty.
+- The application automatically seeds sample data (categories, events, venues, and reviews) if tables are empty.
 - Database configuration can be changed in `config.py` or via environment variables.
 - The app also reads `my_flask_app/.env` automatically for local SMTP settings.
 - Passwords are securely hashed before storing.

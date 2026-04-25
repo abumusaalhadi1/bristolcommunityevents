@@ -109,7 +109,7 @@ a {
   opacity: 0.72;
 }
 
- /* ORIGINAL ADMIN STYLES - FIXED */
+/* ==== admin panel ==== */
 .admin-panel {
   background-color: #f8f9fa;
   width: 100%;
@@ -255,12 +255,9 @@ a {
   }
 }
 
-/* PLACEHOLDER FOR ALL OTHER ORIGINAL STYLES */
 header {
   background-color: var(--primary);
 }
-
-/* COMPLETE - CHANGES UNDONE */
 
 
 .auth-container {
@@ -2463,6 +2460,53 @@ footer {
   margin-top: 1.25rem;
 }
 
+.refund-policy-card {
+  background: #fff;
+  padding: 1.5rem;
+  border-radius: 20px;
+  box-shadow: 0 12px 30px rgba(44, 62, 80, 0.08);
+  border: 1px solid #eef2f7;
+}
+
+.refund-policy-card-header {
+  margin-bottom: 1rem;
+}
+
+.refund-policy-card-header h2 {
+  margin-bottom: 0.35rem;
+}
+
+.refund-policy-card-header p {
+  color: #5d6b7b;
+}
+
+.refund-policy-table-wrap {
+  overflow-x: auto;
+}
+
+.refund-policy-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 520px;
+}
+
+.refund-policy-table th,
+.refund-policy-table td {
+  padding: 1rem;
+  text-align: left;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.refund-policy-table th {
+  background: #f8fbfd;
+  color: var(--dark);
+  font-weight: 700;
+}
+
+.refund-policy-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .policy-card {
   background: #fff;
   border-radius: 20px;
@@ -3254,6 +3298,10 @@ footer {
   .policy-grid,
   .refund-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .refund-policy-card {
+    padding: 1.25rem;
   }
 
   .payment-summary-card {
